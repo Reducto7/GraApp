@@ -1,0 +1,23 @@
+package com.example.gra.ui.data
+
+import android.content.Context
+import androidx.room.Database
+import androidx.room.Room
+import androidx.room.RoomDatabase
+
+@Database(entities = [FoodEntity::class], version = 1, exportSchema = false)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun foodDao(): FoodDao
+
+    companion object {
+        @Volatile private var INSTANCE: AppDatabase? = null
+
+        fun getInstance(context: Context): AppDatabase =
+            INSTANCE ?: synchronized(this) {
+                Room.databaseBuilder(context, AppDatabase::class.java, "foods.db")
+                    .fallbackToDestructiveMigration()   // 表变更时直接重建，避免 "no such column"
+                    .build()
+                    .also { INSTANCE = it }
+            }
+    }
+}

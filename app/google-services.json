@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "264038668031",
+    "project_id": "graapp-2b0da",
+    "storage_bucket": "graapp-2b0da.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:264038668031:android:a7fac23882abc5deaadeca",
+        "android_client_info": {
+          "package_name": "com.example.gra"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "264038668031-ln5otqk2ag9udqufsmp0cnr8f6cc0npq.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.gra",
+            "certificate_hash": "1e79f6d982e481adef6f3513abe1f3b7f09aecaf"
+          }
+        },
+        {
+          "client_id": "264038668031-d9qpgqq4pbgtaprkst8f6foc7ac732d9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC6U47KqZ2uN9SjFH7MbRuiFthbd54x8zs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "264038668031-d9qpgqq4pbgtaprkst8f6foc7ac732d9.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
