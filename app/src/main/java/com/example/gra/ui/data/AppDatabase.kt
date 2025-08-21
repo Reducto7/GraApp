@@ -5,17 +5,28 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [FoodEntity::class], version = 1, exportSchema = false)
+@Database(
+    entities = [
+        FoodEntity::class,
+        ExerciseEntity::class,   // ✅ 新增
+        BodyMeasureEntity::class
+    ],
+    version = 6,         // ✅ 版本号 +1（原来 3 就改 4）
+    exportSchema = false
+)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun foodDao(): FoodDao
+    abstract fun exerciseDao(): ExerciseDao   // ✅ 新增
+    abstract fun bodyMeasureDao(): BodyMeasureDao
 
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null
 
-        fun getInstance(context: Context): AppDatabase =
+        fun getInstance(ctx: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
-                Room.databaseBuilder(context, AppDatabase::class.java, "foods.db")
-                    .fallbackToDestructiveMigration()   // 表变更时直接重建，避免 "no such column"
+                INSTANCE ?: Room.databaseBuilder(ctx, AppDatabase::class.java, "app.db")
+                    // 没写迁移的话，加这行避免崩溃（会清库重建）
+                    .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }
             }

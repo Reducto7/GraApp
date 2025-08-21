@@ -33,9 +33,10 @@ import com.google.firebase.auth.FirebaseAuth
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.compose.material.icons.filled.Star
 import android.widget.Toast
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Close
 
 import com.example.gra.ui.data.FoodEntity
-
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -92,6 +93,9 @@ fun FoodRecordPage(
         awaitDispose { auth.removeAuthStateListener(listener) }
     }
 
+    val selectedFoods by foodViewModel.selectedItemsFlow.collectAsState()
+    val totalFoodKcal = selectedFoods.sumOf { it.kcal }
+
 // 👇 页面一进来就自动获取今天的第几餐
     LaunchedEffect(Unit) {
         viewModel.getTodayMealIndex(userId, today) {
@@ -114,21 +118,14 @@ fun FoodRecordPage(
             val context = LocalContext.current
 
             FoodRecordBottomBar(
-                totalItems = foodViewModel.totalItemsCount(),
-                totalKcal = foodViewModel.totalItemsKcal(),
+                totalItems = selectedFoods.size,
+                totalKcal = totalFoodKcal,
                 onShowSelectedItems = { showSelectedSheet.value = true },
                 onFinish = {
                     if (isSaving) return@FoodRecordBottomBar
-
-                    //val hasPlay = com.example.gra.util.PlayServices.available(context)
                     val userId = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
 
-                    when {/*
-                        !hasPlay -> {
-                            Toast.makeText(context, "本机没有 Google Play 服务，无法使用云端保存", Toast.LENGTH_SHORT).show()
-                            return@FoodRecordBottomBar
-                        }
-                        */
+                    when {
                         userId.isBlank() -> {
                             Toast.makeText(context, "请先登录后再保存", Toast.LENGTH_SHORT).show()
                             return@FoodRecordBottomBar
@@ -293,13 +290,13 @@ fun FoodRecordPage(
         }
     }
 
+    // 打开“已选列表”：
     if (showSelectedSheet.value) {
-        ModalBottomSheet(
-            onDismissRequest = { showSelectedSheet.value = false }
-        ) {
+        ModalBottomSheet(onDismissRequest = { showSelectedSheet.value = false }) {
             SelectedItemsSheet(
-                selectedItems = foodViewModel.selectedItems,
-                totalKcal = foodViewModel.totalItemsKcal()
+                selectedItems = selectedFoods,                 // ✅ 用收集到的列表
+                totalKcal = totalFoodKcal,                    // ✅ 用实时合计
+                onRemove = { idx -> foodViewModel.removeSelectedAt(idx) }  // ✅ 即时删除
             )
         }
     }
@@ -307,10 +304,21 @@ fun FoodRecordPage(
 
 @Composable
 fun BottomSheetContent(
-    food: FoodEntity,
-    onSave: (Double) -> Unit
+    food: FoodEntity,               // ✅ 改成直接拿 FoodEntity，里面有 kcal100g
+    onSave: (Double) -> Unit        // 仍然传 grams 回去
 ) {
-    var grams by remember { mutableStateOf("") }
+    var gramsText by remember { mutableStateOf("") }
+    val per100 = food.kcal100g ?: 0.0
+
+    // 实时计算：四舍五入为 Int（你之前的 SelectedFood.kcal 是 Int）
+    val addKcal by remember(gramsText, per100) {
+        mutableStateOf(
+            runCatching {
+                val g = gramsText.toDouble()
+                ((per100 * g) / 100.0).toInt()
+            }.getOrDefault(0)
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -320,10 +328,9 @@ fun BottomSheetContent(
         Text("添加 ${food.name}", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(8.dp))
 
-        // ✅ 展示各项营养（单位/空值处理）
+        // 展示营养信息
         fun fmt(x: Double?, unit: String) =
             if (x == null) "-" else "${"%.1f".format(x)} $unit"
-
         Text("에너지: ${fmt(food.kcal100g, "kcal/100g")}")
         Text("단백질: ${fmt(food.protein100g, "g/100g")}")
         Text("지방: ${fmt(food.fat100g, "g/100g")}")
@@ -332,46 +339,67 @@ fun BottomSheetContent(
         Spacer(Modifier.height(12.dp))
 
         OutlinedTextField(
-            value = grams,
-            onValueChange = { grams = it },
+            value = gramsText,
+            onValueChange = { gramsText = it },
             label = { Text("请输入克数") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
         )
 
         Spacer(Modifier.height(16.dp))
 
         Button(
             onClick = {
-                val amount = grams.toDoubleOrNull() ?: 0.0
-                onSave(amount)
+                val g = gramsText.toDoubleOrNull() ?: 0.0
+                onSave(g)
             },
+            enabled = addKcal > 0,                                  // ✅ 没有有效输入时禁用
             modifier = Modifier.fillMaxWidth()
-        ) { Text("保存") }
+        ) {
+            Text(if (addKcal > 0) "添加 ${addKcal} kcal" else "添加")
+        }
     }
 }
+
 
 
 
 @Composable
 fun SelectedItemsSheet(
     selectedItems: List<SelectedFood>,
-    totalKcal: Int
+    totalKcal: Int,
+    onRemove: (Int) -> Unit    // ✅ 新增
 ) {
     Column(Modifier.fillMaxWidth().padding(16.dp)) {
-        Text("已选 ${totalKcal} kcal")
+        Text("已选 ${totalKcal} kcal", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(8.dp))
-        selectedItems.forEach { item ->
+
+        selectedItems.forEachIndexed { index, item ->
             Row(
-                Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
+                Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(item.name)
-                Text("${item.grams}g ${item.kcal.toInt()} kcal")
+                // 左侧删除按钮
+                IconButton(onClick = { onRemove(index) }) {
+                    Icon(
+                        imageVector = Icons.Default.Close, // 或 Icons.Default.RemoveCircle
+                        contentDescription = "删除",
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
+
+                // 名称 + 数值
+                Column(Modifier.weight(1f)) {
+                    Text(item.name)
+                    Text("${item.grams} g   ${item.kcal} kcal", style = MaterialTheme.typography.bodySmall)
+                }
             }
+            Divider()
         }
     }
 }
+
 
 @Composable
 fun FoodRecordBottomBar(

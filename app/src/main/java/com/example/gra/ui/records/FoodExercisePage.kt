@@ -48,11 +48,6 @@ fun FoodExercisePage(
 
     val currentBackStackEntry = navController.currentBackStackEntry
 
-
-    val context = LocalContext.current
-    var selectedDate by remember { mutableStateOf(LocalDate.now()) }
-
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -135,7 +130,7 @@ fun FoodExercisePage(
 
             Button(
                 onClick = {
-                    // TODO: 跳转到运动记录页
+                    navController.navigate("exercise")
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {

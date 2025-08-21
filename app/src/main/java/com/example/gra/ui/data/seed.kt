@@ -92,3 +92,32 @@ suspend fun prepopulateFromAssetsIfEmpty(context: Context, db: AppDatabase) {
         Log.e(TAG, "Seeding failed", e)
     }
 }
+
+suspend fun prepopulateExercisesIfEmpty(context: Context, db: AppDatabase) {
+    val dao = db.exerciseDao()
+    if (dao.count() > 0) return
+
+    val (reader, cs) = openCsvReaderMultiCharset(context, "exercises_ko.csv")
+    Log.i("ExSeed", "charset=$cs")
+    reader.readNext() // skip header
+
+    val batch = arrayListOf<ExerciseEntity>()
+    var line = 1
+    while (true) {
+        val row = reader.readNext() ?: break
+        line++
+        try {
+            val id  = row[0].trim()
+            val cat = row[1].trim()
+            val nm  = row[2].trim()
+            val met = row[3].trim().toDouble()
+            val syn = row.getOrNull(4)
+            batch += ExerciseEntity(id, cat, nm, nm.lowercase(), met, syn)
+            if (batch.size >= 400) { dao.upsertAll(batch); batch.clear() }
+        } catch (e: Exception) {
+            Log.e("ExSeed", "line $line failed: ${row.joinToString("|")}", e)
+        }
+    }
+    if (batch.isNotEmpty()) dao.upsertAll(batch)
+    Log.i("ExSeed", "done, rows=${dao.count()}")
+}

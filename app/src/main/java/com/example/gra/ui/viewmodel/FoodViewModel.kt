@@ -13,6 +13,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
+import com.example.gra.ui.data.ExerciseEntity
+import com.example.gra.ui.data.ExerciseRepository
 import com.example.gra.ui.data.FoodRepository
 import com.example.gra.ui.data.FoodEntity
 import kotlinx.coroutines.flow.*
@@ -139,18 +141,29 @@ class FoodViewModel(app: Application) : AndroidViewModel(app) {
 
 
 
-    // ---------- 已选项目 / 真实热量 ----------
-    var selectedItems: List<SelectedFood> = emptyList()
-        private set
+    private val _selectedItems = MutableStateFlow<List<SelectedFood>>(emptyList())
+    val selectedItemsFlow: StateFlow<List<SelectedFood>> = _selectedItems.asStateFlow()
 
-    /** 传实体，直接用 kcal100g 计算 */
+    // 可选：保留只读兼容（如果你其他地方还直接用 viewModel.selectedItems）
+    val selectedItems: List<SelectedFood> get() = _selectedItems.value
+
     fun addFood(food: FoodEntity, grams: Double) {
         val per100 = food.kcal100g ?: 0.0
         val kcal = ((per100 * grams) / 100.0).roundToInt()
-        selectedItems = selectedItems + SelectedFood(food.name, grams, kcal)
+        _selectedItems.value = _selectedItems.value + SelectedFood(food.name, grams, kcal)
     }
 
-    fun clearAll() { selectedItems = emptyList() }
+    fun removeSelectedAt(index: Int) {
+        val cur = _selectedItems.value
+        if (index !in cur.indices) return
+        _selectedItems.value = cur.toMutableList().also { it.removeAt(index) }
+    }
+
+    fun clearAll() { _selectedItems.value = emptyList() }
+
+    fun totalItemsCount(): Int = _selectedItems.value.size
+    fun totalItemsKcal(): Int = _selectedItems.value.sumOf { it.kcal }
+
 
     // … 你的 getTodayMealIndex / saveMeal / loadDataByDate 原样保留 …
 
@@ -162,17 +175,6 @@ class FoodViewModel(app: Application) : AndroidViewModel(app) {
 
     // 供页面调用
     fun chooseCategory(cat: String?) { _selectedCategory.value = cat }
-
-    /** 用数据库里的 kcal/100g 计算并添加 */
-    fun addFood(name: String, grams: Double) {
-        viewModelScope.launch {
-            val item = repo.getByName(name)
-            val per100 = item?.kcal100g ?: 0.0
-            val kcal = ((per100 * grams) / 100.0).roundToInt()
-            selectedItems = selectedItems + SelectedFood(name, grams, kcal)
-        }
-    }
-
 
     fun addMeal(kcal: Int) {
         val mealName = "第${meals.size + 1}餐"
@@ -191,16 +193,6 @@ class FoodViewModel(app: Application) : AndroidViewModel(app) {
     // ✅ 如果后期有运动消耗，也可以配一个
     var totalBurnKcal = mutableStateOf(0)
         private set
-
-    /**
-     * 总项数
-     */
-    fun totalItemsCount(): Int = selectedItems.size
-
-    /**
-     * 总卡路里
-     */
-    fun totalItemsKcal(): Int = selectedItems.sumOf { it.kcal }
 
 
     /**

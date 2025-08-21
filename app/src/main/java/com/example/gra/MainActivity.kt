@@ -15,8 +15,10 @@ import com.example.gra.ui.MinePage
 import com.example.gra.ui.RegisterPage
 import com.example.gra.ui.data.AppDatabase
 import com.example.gra.ui.records.FoodRecordPage
+import com.example.gra.ui.records.ExerciseRecordPage
 import com.example.gra.ui.records.RecordsPage
 import com.example.gra.ui.data.prepopulateFromAssetsIfEmpty
+import com.example.gra.ui.records.BodyMeasurePage
 import com.example.gra.ui.theme.GraTheme
 import com.google.firebase.FirebaseApp
 import kotlinx.coroutines.Dispatchers
@@ -35,11 +37,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             GraTheme {
                 val navController = rememberNavController()
-                //val viewModel: BillViewModel = viewModel()
 
                 NavHost(
                     navController = navController,
-                    startDestination = "food_exercise"
+                    startDestination = "body"
                 ) {
                     composable(route = "login") {
                         LoginPage(navController, context = this@MainActivity)
@@ -56,13 +57,18 @@ class MainActivity : ComponentActivity() {
                     composable("food_exercise") {
                         FoodExercisePage(navController)
                     }
+                    composable("exercise") {
+                        ExerciseRecordPage(navController)
+                    }
                     composable("food") {
                         FoodRecordPage(navController)
+                    }
+                    composable("body") {
+                        BodyMeasurePage(navController)
                     }
                     composable("mine") {
                         MinePage(navController)
                     }
-
                 }
             }
         }

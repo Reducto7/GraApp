@@ -54,7 +54,7 @@ fun RecordsPage(navController: NavHostController) {
                 title = "运动记录",
                 description = "记录每日运动类型和时长",
                 onClick = {
-                    // TODO: 跳转到运动记录页面
+                    navController.navigate("exercise")
                 }
             )
 
@@ -65,7 +65,7 @@ fun RecordsPage(navController: NavHostController) {
                 title = "身体数据记录",
                 description = "记录体重、围度等身体数据",
                 onClick = {
-                    // TODO: 跳转到身体数据页面
+                    navController.navigate("body")
                 }
             )
 

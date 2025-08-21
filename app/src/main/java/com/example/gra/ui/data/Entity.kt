@@ -27,3 +27,29 @@ data class FoodEntity(
     @ColumnInfo(name = "sugar_g_100g") val sugar100g: Double?,
     @ColumnInfo(name = "synonyms") val synonyms: String?
 )
+
+@Entity(tableName = "exercises")
+data class ExerciseEntity(
+    @PrimaryKey @ColumnInfo(name = "id") val id: String,
+    @ColumnInfo(name = "category") val category: String,
+    @ColumnInfo(name = "name") val name: String,
+    @ColumnInfo(name = "name_lc") val nameLc: String,
+    @ColumnInfo(name = "met") val met: Double,
+    @ColumnInfo(name = "synonyms") val synonyms: String? = null
+)
+
+@Entity(
+    tableName = "body_measures",
+    indices = [Index("type"), Index("date")]
+)
+data class BodyMeasureEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** waist/chest/hip/thigh/upperarm/weight */
+    @ColumnInfo(name = "type") val type: String,
+    /** 记录日期：yyyy-MM-dd（和你现在的记录一致） */
+    @ColumnInfo(name = "date") val date: String,
+    /** 数值（cm 或 kg） */
+    @ColumnInfo(name = "value") val value: Double,
+    /** 单位："cm" 或 "kg"（weight 用 kg） */
+    @ColumnInfo(name = "unit") val unit: String
+)
