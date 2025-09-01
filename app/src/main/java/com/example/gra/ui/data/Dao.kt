@@ -108,4 +108,7 @@ interface BodyMeasureDao {
 
     @Query("DELETE FROM body_measures WHERE type = :type AND date = :date")
     suspend fun deleteByTypeDate(type: String, date: String)
+
+    @Query("SELECT * FROM body_measures WHERE id = :id LIMIT 1")
+    suspend fun findById(id: String): BodyMeasureEntity?
 }

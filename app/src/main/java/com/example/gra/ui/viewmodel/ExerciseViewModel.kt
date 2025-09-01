@@ -8,13 +8,18 @@ import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.example.gra.ui.data.ExerciseEntity
 import com.example.gra.ui.data.ExerciseRepository
+import com.example.gra.ui.data.Remote
 import com.google.firebase.Firebase
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.firestore
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
+
+    // 2) 成员
+    private val remote = Remote.create()
 
     private val repo = ExerciseRepository.create(app)
 
@@ -62,51 +67,39 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // ============ 收藏（exercise_favorites） ============
-
+    // 3) 收藏监听：替换 startFavoritesListener()
     fun startFavoritesListener(userId: String) {
         if (userId.isBlank()) return
-        Firebase.firestore.collection("users").document(userId)
-            .collection("exercise_favorites")
-            .addSnapshotListener { snap, e ->
-                if (e != null) { Log.e("ExFav", "listen error", e); return@addSnapshotListener }
-                val ids = snap?.documents?.map { it.id }?.toSet() ?: emptySet()
-                Log.i("ExFav", "fav ids updated size=${ids.size}")
-                _favoriteIds.value = ids
-            }
+        remote.observeExerciseFavorites(userId)
+            .onEach { ids -> _favoriteIds.value = ids }
+            .launchIn(viewModelScope)
     }
 
     private fun isFavorite(id: String) = _favoriteIds.value.contains(id)
 
-    /** 切换收藏（乐观更新+回调） */
+    // 4) 收藏切换：替换 toggleFavorite()
     fun toggleFavorite(
         userId: String,
-        ex: ExerciseEntity,
-        onSuccess: (added: Boolean) -> Unit = {},
+        exercise: ExerciseEntity,
+        onSuccess: (Boolean) -> Unit = {},
         onError: (Throwable) -> Unit = {}
     ) {
         if (userId.isBlank()) { onError(IllegalStateException("未登录")); return }
-        val doc = Firebase.firestore.collection("users").document(userId)
-            .collection("exercise_favorites").document(ex.id)
-
-        if (isFavorite(ex.id)) {
-            doc.delete()
-                .addOnSuccessListener {
-                    _favoriteIds.value = _favoriteIds.value - ex.id
+        val has = _favoriteIds.value.contains(exercise.id)
+        viewModelScope.launch {
+            try {
+                if (has) {
+                    remote.removeExerciseFavorite(userId, exercise.id)
+                    _favoriteIds.value = _favoriteIds.value - exercise.id
                     onSuccess(false)
-                }
-                .addOnFailureListener { onError(it) }
-        } else {
-            doc.set(mapOf(
-                "name" to ex.name,
-                "category" to ex.category,
-                "ts" to FieldValue.serverTimestamp()
-            ))
-                .addOnSuccessListener {
-                    _favoriteIds.value = _favoriteIds.value + ex.id
+                } else {
+                    remote.addExerciseFavorite(userId, exercise.id, exercise.name)
+                    _favoriteIds.value = _favoriteIds.value + exercise.id
                     onSuccess(true)
                 }
-                .addOnFailureListener { onError(it) }
+            } catch (e: Exception) {
+                onError(e)
+            }
         }
     }
 
@@ -143,11 +136,7 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
 
     // ============ 保存到 Firestore（写入消耗） ============
 
-    /**
-     * 保存到 users/{uid}/records/{date}
-     * - 累加 totalBurn
-     * - 追加 exercises 数组（每项: name, minutes, kcal）
-     */
+    // 5) 保存消耗：替换 saveBurn()
     fun saveBurn(
         userId: String,
         date: String,
@@ -156,34 +145,16 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         if (userId.isBlank()) { onError(IllegalStateException("未登录")); return }
         if (selectedItems.isEmpty()) { onError(IllegalStateException("未添加任何运动")); return }
-
-        val docRef = Firebase.firestore.collection("users").document(userId)
-            .collection("records").document(date)
-
-        Firebase.firestore.runTransaction { tr ->
-            val snap = tr.get(docRef)
-            val oldBurn = snap.getLong("totalBurn")?.toInt() ?: 0
-            val add = selectedItems.sumOf { it.kcal }
-
-            // 追加 exercises 多条
-            val arrayToAdd = selectedItems.map {
-                mapOf("name" to it.name, "minutes" to it.minutes, "kcal" to it.kcal)
-            }.toTypedArray()
-
-            tr.set(docRef, mapOf(
-                "totalBurn" to (oldBurn + add)
-            ), com.google.firebase.firestore.SetOptions.merge())
-
-            tr.update(docRef, mapOf(
-                "exercises" to FieldValue.arrayUnion(*arrayToAdd)
-            ))
-        }.addOnSuccessListener {
-            Log.i("FirestoreBurn", "✅ 保存成功: users/$userId/records/$date")
-            clearAll()
-            onComplete()
-        }.addOnFailureListener { e ->
-            Log.e("FirestoreBurn", "❌ 保存失败", e)
-            onError(e)
+        viewModelScope.launch {
+            try {
+                val payload = selectedItems.map { Remote.ExerciseUpload(it.name, it.minutes, it.kcal) }
+                remote.appendExercises(userId, date, payload)
+                remote.markTaskCompleted(userId, date, Remote.TaskId.WORKOUT)
+                clearAll()
+                onComplete()
+            } catch (e: Exception) {
+                onError(e)
+            }
         }
     }
 }

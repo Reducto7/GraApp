@@ -89,6 +89,10 @@ dependencies {
 // 若还没有 lifecycleScope：
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
 
+
+    implementation ("com.airbnb.android:lottie-compose:6.4.0")
+
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)

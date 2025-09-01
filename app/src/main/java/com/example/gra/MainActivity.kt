@@ -8,21 +8,27 @@ import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.example.gra.tasks.TasksPage
 import com.example.gra.ui.LoginPage
 import com.example.gra.ui.records.FoodExercisePage
 import com.example.gra.ui.MainPage
 import com.example.gra.ui.MinePage
 import com.example.gra.ui.RegisterPage
+import com.example.gra.ui.SetUniqueIdPage
 import com.example.gra.ui.data.AppDatabase
-import com.example.gra.ui.records.FoodRecordPage
-import com.example.gra.ui.records.ExerciseRecordPage
+import com.example.gra.ui.records.ExercisePage
 import com.example.gra.ui.records.RecordsPage
 import com.example.gra.ui.data.prepopulateFromAssetsIfEmpty
 import com.example.gra.ui.records.BodyMeasurePage
+import com.example.gra.ui.records.FoodPage
 import com.example.gra.ui.theme.GraTheme
 import com.google.firebase.FirebaseApp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
+import com.example.gra.ui.records.SleepPage
+import com.example.gra.ui.records.WaterPage
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -40,7 +46,7 @@ class MainActivity : ComponentActivity() {
 
                 NavHost(
                     navController = navController,
-                    startDestination = "body"
+                    startDestination = "main"
                 ) {
                     composable(route = "login") {
                         LoginPage(navController, context = this@MainActivity)
@@ -48,8 +54,24 @@ class MainActivity : ComponentActivity() {
                     composable("register") {
                         RegisterPage(navController)
                     }
-                    composable("main") {
-                        MainPage(navController)
+
+                    // ✅ main 支持可选查询参数 show=friends|groups（也可为空）
+                    composable(
+                        route = "main?show={show}",
+                        arguments = listOf(
+                            navArgument("show") {
+                                type = NavType.StringType
+                                nullable = true
+                                defaultValue = null
+                            }
+                        )
+                    ) { backStackEntry ->
+                        val show = backStackEntry.arguments?.getString("show")
+                        MainPage(navController = navController, initialShow = show)
+                    }
+
+                    composable("tasks") {
+                        TasksPage(navController)
                     }
                     composable("records") {
                         RecordsPage(navController)
@@ -58,16 +80,25 @@ class MainActivity : ComponentActivity() {
                         FoodExercisePage(navController)
                     }
                     composable("exercise") {
-                        ExerciseRecordPage(navController)
+                        ExercisePage(navController)
                     }
                     composable("food") {
-                        FoodRecordPage(navController)
+                        FoodPage(navController)
                     }
                     composable("body") {
                         BodyMeasurePage(navController)
                     }
+                    composable("water") {
+                        WaterPage(navController)
+                    }
+                    composable("sleep") {
+                        SleepPage(navController)
+                    }
                     composable("mine") {
                         MinePage(navController)
+                    }
+                    composable("set_unique_id") {
+                        SetUniqueIdPage(navController)
                     }
                 }
             }

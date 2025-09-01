@@ -8,15 +8,15 @@ import androidx.room.RoomDatabase
 @Database(
     entities = [
         FoodEntity::class,
-        ExerciseEntity::class,   // ✅ 新增
+        ExerciseEntity::class,
         BodyMeasureEntity::class
     ],
-    version = 6,         // ✅ 版本号 +1（原来 3 就改 4）
+    version = 6,         // ✅ 版本号 +1
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun foodDao(): FoodDao
-    abstract fun exerciseDao(): ExerciseDao   // ✅ 新增
+    abstract fun exerciseDao(): ExerciseDao
     abstract fun bodyMeasureDao(): BodyMeasureDao
 
     companion object {

@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import com.example.gra.ui.data.BodyMeasureRepository
+import com.example.gra.ui.data.Remote
+import com.google.firebase.auth.FirebaseAuth
 
 enum class BodyType(val key: String, val label: String, val unit: String) {
     WEIGHT("weight", "体重", "kg"),
@@ -33,6 +35,12 @@ val BODY_DISPLAY_ORDER = listOf(
 )
 
 class BodyMeasureViewModel(app: Application) : AndroidViewModel(app) {
+    // 2) 成员
+    private val remote = Remote.create()
+
+    // 3) 新增一个便捷取 uid
+    private fun uidOrNull(): String? = FirebaseAuth.getInstance().currentUser?.uid
+
     private val dao: BodyMeasureDao = AppDatabase.getInstance(app).bodyMeasureDao()
     private val repo = BodyMeasureRepository.create(app)
 
@@ -53,24 +61,38 @@ class BodyMeasureViewModel(app: Application) : AndroidViewModel(app) {
         _selectedType.flatMapLatest { t -> dao.history(t.key) }
             .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
+    // 4) 新增/更新/删除时，同时同步到 Firestore（按类型归档）
     fun addRecord(type: BodyType, value: Double, date: LocalDate = LocalDate.now()) {
         viewModelScope.launch {
-            dao.insert(
-                BodyMeasureEntity(
-                    type = type.key,
-                    date = date.toString(),
-                    value = value,
-                    unit = type.unit
-                )
-            )
+            // 本地
+            dao.insert(BodyMeasureEntity(type = type.key, date = date.toString(), value = value, unit = type.unit))
+            // 远端
+            uidOrNull()?.let { uid ->
+                try {
+                    remote.upsertBodyMetric(uid, type.key, date.toString(), value, type.unit)
+                    remote.markTaskCompleted(uid, date.toString(), Remote.TaskId.BODY)
+                } catch (_: Exception) {}
+            }
         }
     }
-
     fun updateRecord(type: BodyType, id: String, newValue: Double, newDate: LocalDate) {
         viewModelScope.launch {
             try {
+                // 先查旧记录，便于远端删除旧 doc（若日期被改）
+                val old = dao.findById(id)
+                // 本地更新
                 repo.updateMeasure(type, id, newValue, newDate.toString())
-                // 成功后，repo 内部应触发 Flow/StateFlow 刷新；或在这里手动 refresh()
+                // 远端处理
+                uidOrNull()?.let { uid ->
+                    try {
+                        if (old != null && old.date != newDate.toString()) {
+                            // 日期改变：删旧建新
+                            remote.deleteBodyMetric(uid, type.key, old.date)
+                        }
+                        remote.upsertBodyMetric(uid, type.key, newDate.toString(), newValue, type.unit)
+                        remote.markTaskCompleted(uid, newDate.toString(), Remote.TaskId.BODY)
+                    } catch (_: Exception) {}
+                }
             } catch (e: Exception) {
                 Log.e("Measure", "update failed", e)
             }
@@ -80,7 +102,13 @@ class BodyMeasureViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteRecord(type: BodyType, id: String) {
         viewModelScope.launch {
             try {
+                val old = dao.findById(id)
                 repo.deleteMeasure(type, id)
+                uidOrNull()?.let { uid ->
+                    if (old != null) {
+                        try { remote.deleteBodyMetric(uid, type.key, old.date) } catch (_: Exception) {}
+                    }
+                }
             } catch (e: Exception) {
                 Log.e("Measure", "delete failed", e)
             }

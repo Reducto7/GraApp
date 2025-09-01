@@ -7,7 +7,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -33,15 +32,21 @@ import com.google.firebase.auth.FirebaseAuth
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.compose.material.icons.filled.Star
 import android.widget.Toast
-import androidx.compose.material.icons.filled.Clear
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowLeft
+import androidx.compose.material3.MaterialTheme.colorScheme
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 
 import com.example.gra.ui.data.FoodEntity
 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FoodRecordPage(
+fun FoodPage(
     navController: NavHostController,
     foodViewModel: FoodViewModel = viewModel()
 ) {
@@ -160,6 +165,11 @@ fun FoodRecordPage(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(com.example.gra.ui.topBlue, com.example.gra.ui.bottomGreen)
+                    )
+                )
                 .padding(innerPadding)
         ) {
             OutlinedTextField(
@@ -168,33 +178,66 @@ fun FoodRecordPage(
                 label = { Text("搜索食物名称") },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp)
+                    .padding(16.dp),
+                colors = TextFieldDefaults.outlinedTextFieldColors(
+                    focusedBorderColor = colorScheme.primary,
+                    unfocusedBorderColor = colorScheme.primary.copy(alpha = 1f),
+                    focusedLabelColor = colorScheme.primary
+                ),
             )
 
-            Row(Modifier.fillMaxSize()) {
-                Column(
+
+            Row(
+                Modifier
+                    .fillMaxSize()
+                    .padding(start = 16.dp, bottom = 16.dp) // ⭐ 让整行离屏幕左/下留 16dp
+            ) {
+                // ==== 左侧：可滚动的分类栏（圆角 + 渐变）====
+                Box(
                     modifier = Modifier
-                        .width(80.dp)
+                        .width(96.dp)
                         .fillMaxHeight()
-                        .background(Color.LightGray)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.White)
                 ) {
-                    categories.forEach { category ->
-                        Text(
-                            text = category,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp)
-                                .clickable { selectedCategory = category },
-                            color = if (selectedCategory == category) Color.Blue else Color.Black
-                        )
+                    val catListState = rememberLazyListState()
+
+                    LazyColumn(
+                        state = catListState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(vertical = 8.dp, horizontal = 6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(categories, key = { it }) { category ->
+                            val selected = selectedCategory == category
+                            // 每个分类项：圆角 + 选中高亮
+                            Text(
+                                text = category,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(
+                                        if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                                        else Color.Transparent
+                                    )
+                                    .clickable { selectedCategory = category }
+                                    .padding(vertical = 10.dp, horizontal = 10.dp),
+                                color = if (selected) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
                     }
                 }
 
+
+                // ==== 右侧：食物列表====
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxHeight()
                         .weight(1f)
-                        .padding(16.dp)
+                        .padding(start = 12.dp, end = 16.dp)
                 ) {
                     // ✅ 用 foundation 的 items(count, key)。key 用 peek(index)?.id，避免触发加载
                     items(
@@ -204,67 +247,79 @@ fun FoodRecordPage(
                         val food = pagingItems[index] ?: return@items
                         val fav = favIds.contains(food.id)
 
-                        Card(
+                        ElevatedCard(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 4.dp)
+                                .padding(vertical = 4.dp),
+                            shape = RoundedCornerShape(4.dp),
+                            colors = CardDefaults.cardColors(
+                                Color.White   // 让背景显示渐变
+                            )
                         ) {
-                            Row(
+                            Box(
                                 modifier = Modifier
+                                    .background(
+                                        color = Color.Transparent
+                                    )
                                     .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // 星标
-                                IconButton(onClick = {
-                                    if (userId.isBlank()) {
-                                        Toast.makeText(context, "请先登录后再收藏", Toast.LENGTH_SHORT).show()
-                                        return@IconButton
-                                    }
-                                    foodViewModel.toggleFavorite(
-                                        userId = userId,
-                                        food = food,
-                                        onSuccess = { added ->
-                                            // ✅ 成功提示
-                                            Toast.makeText(
-                                                context,
-                                                if (added) "已加入收藏" else "已取消收藏",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                        },
-                                        onError = { e ->
-                                            Log.e("Favorites", "toggle failed", e)
-                                            Toast.makeText(
-                                                context,
-                                                "收藏失败：${e.localizedMessage}",
-                                                Toast.LENGTH_LONG
-                                            ).show()
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // 星标
+                                    IconButton(onClick = {
+                                        if (userId.isBlank()) {
+                                            Toast.makeText(context, "请先登录后再收藏", Toast.LENGTH_SHORT).show()
+                                            return@IconButton
                                         }
-                                    )
-                                }) {
-                                    Icon(
-                                        imageVector = if (fav) Icons.Filled.Star else Icons.Outlined.Star,
-                                        contentDescription = if (fav) "取消收藏" else "加入收藏",
-                                        tint = if (fav) MaterialTheme.colorScheme.primary else Color.Gray
-                                    )
-                                }
+                                        foodViewModel.toggleFavorite(
+                                            userId = userId,
+                                            food = food,
+                                            onSuccess = { added ->
+                                                Toast.makeText(
+                                                    context,
+                                                    if (added) "已加入收藏" else "已取消收藏",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            },
+                                            onError = { e ->
+                                                Log.e("Favorites", "toggle failed", e)
+                                                Toast.makeText(
+                                                    context,
+                                                    "收藏失败：${e.localizedMessage}",
+                                                    Toast.LENGTH_LONG
+                                                ).show()
+                                            }
+                                        )
+                                    }) {
+                                        Icon(
+                                            imageVector = if (fav) Icons.Filled.Star else Icons.Outlined.Star,
+                                            contentDescription = if (fav) "取消收藏" else "加入收藏",
+                                            tint = if (fav) MaterialTheme.colorScheme.primary else Color.Gray
+                                        )
+                                    }
 
-                                Spacer(Modifier.width(12.dp))
+                                    Spacer(Modifier.width(12.dp))
 
-                                Column(Modifier.weight(1f)) {
-                                    Text(food.name)
-                                    Text(
-                                        "约 ${"%.0f".format(food.kcal100g ?: 0.0)} kcal/100g",
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
-                                }
+                                    Column(Modifier.weight(1f)) {
+                                        Text(food.name, style = MaterialTheme.typography.titleMedium)
+                                        Text(
+                                            "约 ${"%.0f".format(food.kcal100g ?: 0.0)} kcal/100g",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
 
-                                IconButton(onClick = {
-                                    selectedFood = food
-                                    coroutineScope.launch { sheetState.show() }
-                                    showInputSheet = true
-                                }) {
-                                    Icon(Icons.Default.Add, contentDescription = "添加")
+                                    IconButton(onClick = {
+                                        selectedFood = food
+                                        coroutineScope.launch { sheetState.show() }
+                                        showInputSheet = true
+                                    }) {
+                                        Icon(Icons.Default.Add, contentDescription = "添加")
+                                    }
                                 }
                             }
                         }
@@ -487,7 +542,7 @@ fun FoodRecordTopBar(
         },
         navigationIcon = {
             IconButton(onClick = { navController.popBackStack() }) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                Icon(Icons.Default.KeyboardArrowLeft, contentDescription = "返回")
             }
         }
     )

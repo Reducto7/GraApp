@@ -1,104 +1,666 @@
 package com.example.gra.ui.records
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Card
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
-import com.example.gra.ui.BottomNavigationBar
+import com.example.gra.ui.viewmodel.BodyMeasureViewModel
+import com.example.gra.ui.viewmodel.BodyType
+import com.example.gra.ui.viewmodel.FoodViewModel
+import com.example.gra.ui.viewmodel.SleepViewModel
+import java.time.Duration
+import java.time.LocalDate
+import java.time.ZoneId
 
+
+val topBlue = Color(0xFFBFDFFF)    // 浅蓝，带点天蓝色
+val bottomGreen = Color(0xFFCCF2D1) // 浅绿，柔和青草色
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RecordsPage(navController: NavHostController) {
+fun RecordsPage(
+    navController: NavHostController,
+    foodViewModel: FoodViewModel = viewModel()  // 用于读取今日摄入/消耗
+) {
+    // 加载今日数据
+    val today = remember { LocalDate.now() }
+    LaunchedEffect(today) {
+        foodViewModel.loadDataByDate(today)
+    }
+    val intake = foodViewModel.totalIntakeKcal.value
+    val burn = foodViewModel.totalBurnKcal.value
+
+    // 拿到身体数据 VM（与 BodyMeasurePage 同一个类）
+    val bodyVm: BodyMeasureViewModel = viewModel()
+
+// 让 VM 切到“体重”维度
+    LaunchedEffect(Unit) { bodyVm.select(BodyType.WEIGHT) }
+
+// 收集体重历史（真实数据）
+    val weightHistory by bodyVm.history.collectAsState()
+
+    val waterVm: WaterViewModel = viewModel()
+    val waterUi by waterVm.ui.collectAsState()
+    LaunchedEffect(Unit) { waterVm.loadGoal() }
+
+    // —— 睡眠数据（用 SleepViewModel 现有的 sessions） ——
+    val sleepVm: SleepViewModel = viewModel()
+    val sleepSessions by sleepVm.sessions.collectAsState(emptyList())
+
+// 近 7 天（含今天），每天 0:00~24:00 的总睡眠小时（浮点）
+    val zone = remember { ZoneId.systemDefault() }
+    val last7Hours: List<Float> = remember(sleepSessions, today) {
+        val startDate = today.minusDays(6)
+        val days = buildList {
+            var d = startDate
+            while (!d.isAfter(today)) { add(d); d = d.plusDays(1) }
+        }
+        days.map { d ->
+            val dayStart = d.atStartOfDay(zone).toInstant()
+            val dayEnd   = d.plusDays(1).atStartOfDay(zone).toInstant()
+            val minutes = sleepSessions.sumOf { s ->
+                val sStart = s.startTs.toDate().toInstant()
+                val sEnd   = s.endTs.toDate().toInstant()
+                // 计算与当天窗口的重叠分钟
+                val overlapStart = maxOf(sStart, dayStart)
+                val overlapEnd   = minOf(sEnd, dayEnd)
+                val m = Duration.between(overlapStart, overlapEnd).toMinutes().toInt()
+                m.coerceAtLeast(0)
+            }
+            minutes / 60f
+        }
+    }
+
+    // 转成画图用的 Float 列表；只取最近 14 条，按日期升序
+    val weightPoints: List<Float> = remember(weightHistory) {
+        weightHistory
+            .sortedBy { it.date }           // 如果 VM 已经排序，这行也没问题
+            .takeLast(14)
+            .map { it.value.toFloat() }
+    }
+
     Scaffold(
-        bottomBar = {
-            BottomNavigationBar(navController)
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            CenterAlignedTopAppBar(
+                title = { Text("健康记录") },
+                navigationIcon = {
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(Icons.Default.KeyboardArrowLeft, contentDescription = "返回")
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().shadow(8.dp)
+            )
         }
     ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(topBlue, bottomGreen)
+                    )
+                )
                 .padding(innerPadding)
                 .padding(16.dp)
         ) {
+            // 第一块：饮食 & 运动（整块可点，跳转 food_exercise）
+            SummaryCard(
+                intakeKcal = intake,          // 今日摄入（来自你的 VM）
+                burnKcal   = burn,            // 今日消耗
+                // 这两个先写死，之后接“根据身高体重计算”的推荐值即可
+                recommendedIntake = 2200,
+                recommendedBurn   = 750,
+                onClick = { navController.navigate("food_exercise") }
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // 第二块 第三块 第四块：并列放置
+            RecordsMosaic3x3(
+                bodyHeightRatio = 0.58f,
+                onBodyClick = { navController.navigate("body") },
+                onWaterClick = { navController.navigate("water") },
+                onSleepClick = { navController.navigate("sleep") },
+                weights = weightPoints,
+                drunkMl = waterUi.totalMl,
+                goalMl  = waterUi.goalMl,
+                sleepHours = last7Hours                 // ✅ 接入真实“近7天睡眠时长”
+            )
+
+        }
+    }
+}
+
+@Composable
+private fun SummaryCard(
+    intakeKcal: Int,
+    burnKcal: Int,
+    recommendedIntake: Int,
+    recommendedBurn: Int,
+    onClick: () -> Unit
+) {
+    val intakeProgress by animateFloatAsState(
+        targetValue = (intakeKcal / recommendedIntake.toFloat()).coerceIn(0f, 1f),
+        animationSpec = tween(900)
+    )
+    val burnProgress by animateFloatAsState(
+        targetValue = (burnKcal / recommendedBurn.toFloat()).coerceIn(0f, 1f),
+        animationSpec = tween(900)
+    )
+
+    val base = MaterialTheme.colorScheme.primary
+    val intakeColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f + 0.65f * intakeProgress)
+    val burnColor   = MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f + 0.65f * burnProgress)
+
+    ElevatedCard(
+        onClick = onClick, // ← ripple 铺满整个卡片
+        modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp),
+        colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
+        elevation = CardDefaults.elevatedCardElevation(2.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                // 左侧信息
+                LabelWithIndicator(
+                    text = "饮食",
+                    color = MaterialTheme.colorScheme.primary,
+                    style = IndicatorStyle.Bar
+                )
+                Text("$intakeKcal kcal", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(16.dp))
+                LabelWithIndicator(
+                    text = "运动",
+                    color = MaterialTheme.colorScheme.secondary,
+                    style = IndicatorStyle.Bar
+                )
+                Text("$burnKcal kcal", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            }
+
+            // 右侧双环（同色同粗，颜色随进度加深）
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(132.dp)) {
+                    DualRingProgress(
+                        intakeProgress = intakeProgress,
+                        burnProgress   = burnProgress,
+                        ringColor = base,
+                        trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                        overrideIntakeColor = intakeColor,
+                        overrideBurnColor   = burnColor,
+                        startAngle = -90f,
+                        counterClockwise = true,
+                        stroke = 14.dp,
+                        gapBetweenRings = 12.dp
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DualRingProgress(
+    intakeProgress: Float,
+    burnProgress: Float,
+    ringColor: Color,
+    trackColor: Color,
+    startAngle: Float = -90f,
+    counterClockwise: Boolean = true,
+    stroke: Dp = 14.dp,
+    gapBetweenRings: Dp = 12.dp,
+    // 自定义颜色（用于“进度越高越深”）
+    overrideIntakeColor: Color? = null,
+    overrideBurnColor: Color?   = null
+) {
+    val sweepIntake = (if (counterClockwise) -360f else 360f) * intakeProgress
+    val sweepBurn   = (if (counterClockwise) -360f else 360f) * burnProgress
+
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val s = with(density) { stroke.toPx() }
+        val gap = with(density) { gapBetweenRings.toPx() }
+
+        val radiusOuter = (size.minDimension - s) / 2f
+        val radiusInner = radiusOuter - s - gap
+
+        // 轨道
+        drawCircle(trackColor, radiusOuter, center, style = Stroke(s, cap = StrokeCap.Round))
+        drawCircle(trackColor, radiusInner, center, style = Stroke(s, cap = StrokeCap.Round))
+
+        // 外环（饮食）
+        drawArc(
+            color = overrideIntakeColor ?: ringColor,
+            startAngle = startAngle,
+            sweepAngle = sweepIntake,
+            useCenter = false,
+            topLeft = Offset(center.x - radiusOuter, center.y - radiusOuter),
+            size = Size(radiusOuter * 2, radiusOuter * 2),
+            style = Stroke(width = s, cap = StrokeCap.Round)
+        )
+        // 内环（运动）
+        drawArc(
+            color = overrideBurnColor ?: ringColor,
+            startAngle = startAngle,
+            sweepAngle = sweepBurn,
+            useCenter = false,
+            topLeft = Offset(center.x - radiusInner, center.y - radiusInner),
+            size = Size(radiusInner * 2, radiusInner * 2),
+            style = Stroke(width = s, cap = StrokeCap.Round)
+        )
+    }
+}
+
+enum class IndicatorStyle { Bar, Dot }
+
+@Composable
+private fun LabelWithIndicator(
+    text: String,
+    color: Color,
+    style: IndicatorStyle,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.height(IntrinsicSize.Min),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        when (style) {
+            IndicatorStyle.Bar -> Box(
+                Modifier
+                    .width(4.dp)                 // 细长矩形
+                    .fillMaxHeight()             // 与文字同高
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(color)
+            )
+            IndicatorStyle.Dot -> Box(
+                Modifier
+                    .size(10.dp)                 // 小圆点
+                    .clip(CircleShape)
+                    .background(color)
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(text, style = MaterialTheme.typography.labelLarge, color = color)
+    }
+}
+
+@Composable
+fun RecordsMosaic3x3(
+    // 左列上：身体数据所占的高度比例（默认 0.6，比 2/3 更“扁”）
+    bodyHeightRatio: Float = 0.60f,
+    gap: Dp = 12.dp,
+    onBodyClick: () -> Unit = {},
+    onWaterClick: () -> Unit = {},
+    onSleepClick: () -> Unit = {},
+    weights: List<Float> = emptyList(),
+    drunkMl: Int = 0,       // ⬅️ 新增
+    goalMl: Int = 2000,      // ⬅️ 新增（给个默认）
+    sleepHours: List<Float> = emptyList()
+) {
+    // 用容器固定一个合理的总高度；你可以调这个高度让整体更紧凑或更高
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(top = gap)) {
+        val gridHeight = maxWidth * 0.9f    // 比如宽度的 0.9 倍高度
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(gridHeight),
+        ) {
+            // 左列：宽度 2 份
+            Column(
+                modifier = Modifier.weight(2f).fillMaxHeight()
+            ) {
+                BodyCard2x2(
+                    weights = weights,            // ← 用真实数据
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(bodyHeightRatio)
+                        .clip(RoundedCornerShape(12.dp)),
+                    onClick = onBodyClick
+                )
+                Spacer(Modifier.height(gap))
+                SleepCard2x1(
+                    hours = sleepHours.takeLast(7),            // ✅ 用真实数据（保证最多7天）
+                    goalHours = 8f,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f - bodyHeightRatio)
+                        .clip(RoundedCornerShape(12.dp)),
+                    onClick = onSleepClick
+                )
+            }
+
+            Spacer(Modifier.width(gap))
+
+            // 右列：宽度 1 份，纵向占满（1×3）
+            WaterCard1x3(
+                drunkMl = drunkMl,       // ⬅️ 用真实值
+                goalMl  = goalMl,        // ⬅️ 用真实值
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(12.dp)),
+                onClick = onWaterClick
+            )
+        }
+    }
+}
+
+
+@Composable
+private fun BodyCard2x2(
+    weights: List<Float>,                 // ← 最近 N 天体重
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+
+    ElevatedCard(
+        onClick = onClick, // ripple 覆盖整个卡片
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
+        elevation = CardDefaults.elevatedCardElevation(2.dp),
+        modifier = modifier
+    ) {
+        Column(Modifier.fillMaxSize().padding(16.dp)) {
+            Text("身体数据", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
             Text(
-                text = "健康记录",
-                style = MaterialTheme.typography.headlineMedium
+                "体重",
+                style = MaterialTheme.typography.labelMedium,               // 字体小一点
+                color = MaterialTheme.colorScheme.onSurfaceVariant,         // 灰色
+                modifier = Modifier.padding(top = 2.dp)
             )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // 1. 饮食记录
-            RecordCard(
-                title = "饮食记录",
-                description = "记录每日摄入的食物和卡路里",
-                onClick = {
-                    navController.navigate("food_exercise")
-                }
+            Spacer(Modifier.height(8.dp))
+            MinimalAreaLineChart(
+                points = weights,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(8.dp))
             )
+        }
+    }
+}
 
-            Spacer(modifier = Modifier.height(8.dp))
 
-            // 2. 运动记录
-            RecordCard(
-                title = "运动记录",
-                description = "记录每日运动类型和时长",
-                onClick = {
-                    navController.navigate("exercise")
+@Composable
+private fun WaterCard1x3(
+    drunkMl: Int,
+    goalMl: Int,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    // 判断是否已喝水量大于目标量
+    val maxProgress = if (drunkMl > goalMl) drunkMl else goalMl
+    val p = if (maxProgress > 0) (drunkMl.toFloat() / maxProgress).coerceIn(0f, 1f) else 0f
+    val density = LocalDensity.current
+
+    // 记录“进度条可用高度”，用于计算今日饮水文字的垂直位置
+    var barHeightPx by remember { mutableStateOf(0) }
+    val barHeightDp by remember(barHeightPx) { mutableStateOf(with(density) { barHeightPx.toDp() }) }
+
+    // 计算进度条填充高度
+    val levelTopDp = (barHeightDp * (1f - p)).coerceAtLeast(0.dp)
+
+    ElevatedCard(
+        modifier = modifier.clickable(onClick = onClick),
+        colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.elevatedCardElevation(2.dp)
+    ) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(12.dp) // 卡片内边距
+        ) {
+            // 左上角标题
+            Text("饮水", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+
+            Spacer(Modifier.height(8.dp))
+
+            Row(
+                Modifier
+                    .fillMaxSize(),
+                verticalAlignment = Alignment.Top
+            ) {
+                // 左侧：竖向进度条
+                Box(
+                    Modifier
+                        .width(16.dp)                 // 你原本的宽度，按需微调
+                        .fillMaxHeight()
+                        .onGloballyPositioned { barHeightPx = it.size.height }
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)) // 轨道
+                ) {
+                    // 填充（自下而上）
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(p)
+                            .align(Alignment.BottomCenter)
+                            .clip(RoundedCornerShape(bottomStart = 6.dp, bottomEnd = 6.dp))
+                            .background(MaterialTheme.colorScheme.primary)
+                    )
                 }
-            )
 
-            Spacer(modifier = Modifier.height(8.dp))
+                Spacer(Modifier.width(10.dp))
 
-            // 3. 身体数据记录
-            RecordCard(
-                title = "身体数据记录",
-                description = "记录体重、围度等身体数据",
-                onClick = {
-                    navController.navigate("body")
+                // 右侧：刻度式数值区域
+                Box(Modifier.fillMaxSize()) {
+                    // 如果已喝水量大于目标量，则只显示已喝水量
+                    if (drunkMl > goalMl) {
+                        // 显示已喝水量
+                        Text(
+                            text = "$drunkMl ml",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.align(Alignment.TopStart)
+                        )
+                    } else {
+                        // 顶部：目标刻度（目标量的位置）
+                        Text(
+                            text = "$goalMl ml",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.align(Alignment.TopStart)
+                        )
+
+                        // 与进度高度平齐的“今日饮水量”
+                        Column(
+                            Modifier
+                                .fillMaxHeight()
+                                .padding(start = 0.dp)
+                        ) {
+                            Spacer(Modifier.height(levelTopDp))  // 根据进度动态调整
+                            Text(
+                                text = "$drunkMl ml",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
                 }
-            )
+            }
+        }
+    }
+}
 
-            Spacer(modifier = Modifier.height(8.dp))
 
-            // 4. 饮水/睡眠记录
-            RecordCard(
-                title = "饮水/睡眠记录",
-                description = "记录每日饮水量与睡眠情况",
-                onClick = {
-                    // TODO: 跳转到饮水/睡眠记录页面
+@Composable
+private fun SleepCard2x1(
+    hours: List<Float>,              // 最近 N 天
+    goalHours: Float,                // 目标睡眠
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val maxBase = maxOf(goalHours, hours.maxOrNull() ?: 0f).coerceAtLeast(1f)
+
+    ElevatedCard(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
+        elevation = CardDefaults.elevatedCardElevation(2.dp),
+        modifier = modifier
+    ) {
+        Column(Modifier.fillMaxSize().padding(12.dp)) {
+            Text("睡眠", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
+
+            // 柱状图区域占满剩余空间
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+            ) {
+                // 使用 Row + fillMaxHeight(fraction) 画小柱子
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    hours.forEach { h ->
+                        val frac = (h / maxBase).coerceIn(0f, 1f)
+                        // bar
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(frac)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.65f))
+                        )
+                    }
                 }
+
+                // 目标线（8h）可选：取消就删掉这段
+                val goalFrac = (goalHours / maxBase).coerceIn(0f, 1f)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .align(Alignment.BottomCenter)
+                        .offset(y = (-goalFrac).let { frac -> // 换算成距离底部的偏移
+                            // 用布局约束不方便，简单做个近似：在 padding 内部用 fraction 换算
+                            // 这里直接不偏移，若想精确可换 Canvas 方案
+                            0.dp
+                        })
+                        .background(Color.Transparent) // 若要画线请换成 color
+                )
+            }
+
+            Spacer(Modifier.height(6.dp))
+            val avg = if (hours.isNotEmpty()) hours.sum() / hours.size else 0f
+            Text("最近 ${hours.size} 天平均 ${"%.1f".format(avg)} 小时",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
 }
 
 @Composable
-fun RecordCard(
-    title: String,
-    description: String,
-    onClick: () -> Unit
+private fun MinimalAreaLineChart(
+    points: List<Float>,
+    color: Color = MaterialTheme.colorScheme.primary,
+    modifier: Modifier = Modifier
 ) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() },
-        elevation = CardDefaults.cardElevation(4.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(text = title, style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(text = description, style = MaterialTheme.typography.bodyMedium)
+    if (points.isEmpty()) {
+        Box(modifier, contentAlignment = Alignment.Center) { Text("暂无数据") }
+        return
+    }
+    Canvas(modifier) {
+        val padX = 12.dp.toPx()
+        val padTop = 10.dp.toPx()
+        val padBot = 10.dp.toPx()
+        val w = size.width - padX * 2
+        val h = size.height - padTop - padBot
+
+        val minV = points.minOrNull() ?: 0f
+        val maxV = points.maxOrNull() ?: 0f
+        val span = (maxV - minV).let { if (it < 1e-6f) 1f else it }
+
+        fun x(i: Int) = padX + w * (if (points.size == 1) 0f else i / (points.size - 1f))
+        fun y(v: Float) = padTop + h * (1f - (v - minV) / span)
+
+        // 折线路径
+        val line = Path().apply {
+            points.indices.forEach { i ->
+                val xi = x(i); val yi = y(points[i])
+                if (i == 0) moveTo(xi, yi) else lineTo(xi, yi)
+            }
         }
+        // 面积路径
+        val area = Path().apply {
+            addPath(line)
+            lineTo(x(points.lastIndex), padTop + h)
+            lineTo(x(0), padTop + h)
+            close()
+        }
+
+        // 面积填充（同色淡化）
+        drawPath(area, color.copy(alpha = 0.18f))
+        // 折线（无圆点、无数值）
+        drawPath(
+            line,
+            color = color,
+            style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+        )
     }
 }

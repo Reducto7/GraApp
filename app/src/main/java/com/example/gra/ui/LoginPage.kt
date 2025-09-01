@@ -58,6 +58,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import com.example.gra.R
+import com.example.gra.ui.data.Remote
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
@@ -69,6 +70,32 @@ import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
 import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.google.firebase.auth.GoogleAuthProvider
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+
+fun navigateAfterLogin(remote: Remote, navController: NavController) {
+    val uid = FirebaseAuth.getInstance().currentUser?.uid ?: run {
+        android.util.Log.w("Auth", "no uid after login")
+        return
+    }
+    CoroutineScope(Dispatchers.Main).launch {
+        try {
+            val p = remote.getUserProfile(uid)
+            val route = if (p?.uniqueId.isNullOrBlank()) "set_unique_id" else "main"
+            android.util.Log.d("Auth", "post-login route=$route (uniqueId=${p?.uniqueId})")
+            navController.navigate(route) {
+                popUpTo("login") { inclusive = true }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("Auth", "profile load failed", e)
+            // 出错时直接去设置ID，避免卡住
+            navController.navigate("set_unique_id") {
+                popUpTo("login") { inclusive = true }
+            }
+        }
+    }
+}
 
 @Composable
 fun LoginPage(navController: NavController, modifier: Modifier = Modifier, context: Context) {
@@ -79,12 +106,14 @@ fun LoginPage(navController: NavController, modifier: Modifier = Modifier, conte
         .build()
 
     val googleSignInClient = GoogleSignIn.getClient(context, gso)
+    val remote = remember { Remote.create() }
+
 
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
-        handleGoogleSignInResult(task, context, navController)
+        handleGoogleSignInResult(task, context, navController, remote)
     }
 
     Scaffold(
@@ -100,7 +129,7 @@ fun LoginPage(navController: NavController, modifier: Modifier = Modifier, conte
         ) {
 
             // 邮箱登录部分
-            EmailLoginSection(navController, context)
+            EmailLoginSection(navController, context, remote)
 
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -108,15 +137,15 @@ fun LoginPage(navController: NavController, modifier: Modifier = Modifier, conte
             DividerWithText("간편하게 로그인하기")
 
             // Google 登录部分
-            GoogleLoginSection(googleSignInClient, launcher)
+            GoogleLoginSection(googleSignInClient, launcher, context, remote)
 
-            AnonymousLoginSection(navController)
+            AnonymousLoginSection(navController, context,  remote)
         }
     }
 }
 
 @Composable
-fun EmailLoginSection(navController: NavController, context: Context) {
+fun EmailLoginSection(navController: NavController, context: Context,  remote: Remote) {
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
     var isDialogVisible by rememberSaveable { mutableStateOf(false) }
@@ -177,7 +206,7 @@ fun EmailLoginSection(navController: NavController, context: Context) {
                                         .apply()
                                 }
                             }
-                            navController.navigate("main")
+                            navigateAfterLogin(remote, navController)
                         } else {
                             dialogMessage = message
                             isDialogVisible = true
@@ -219,7 +248,7 @@ fun EmailLoginSection(navController: NavController, context: Context) {
                                         .apply()
                                 }
                             }
-                            navController.navigate("main")
+                            navigateAfterLogin(remote, navController)
                         } else {
                             dialogMessage = message
                             isDialogVisible = true
@@ -291,7 +320,9 @@ fun DividerWithText(text: String) {
 @Composable
 fun GoogleLoginSection(
     googleSignInClient: GoogleSignInClient,
-    launcher: ManagedActivityResultLauncher<Intent, ActivityResult>
+    launcher: ManagedActivityResultLauncher<Intent, ActivityResult>,
+    context: Context,
+    remote: Remote
 ) {
     OutlinedButton(
         onClick = {
@@ -308,10 +339,11 @@ fun GoogleLoginSection(
 }
 
 @Composable
-fun AnonymousLoginSection(navController: NavController) {
+fun AnonymousLoginSection(navController: NavController, context: Context,
+                          remote: Remote) {
     OutlinedButton(
         onClick = {
-            performAnonymousLogin(navController)
+            performAnonymousLogin(navController, remote)
         },
         modifier = Modifier.fillMaxWidth(),
         colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White)
@@ -320,34 +352,47 @@ fun AnonymousLoginSection(navController: NavController) {
     }
 }
 
-fun performAnonymousLogin(navController: NavController) {
+fun performAnonymousLogin(navController: NavController, remote: Remote) {
     val auth = FirebaseAuth.getInstance()
     auth.signInAnonymously()
         .addOnCompleteListener { task ->
             if (task.isSuccessful) {
                 Log.d("AnonymousLogin", "signInAnonymously:success")
-                navController.navigate("main")
+                navigateAfterLogin(remote, navController)
             } else {
                 Log.e("AnonymousLogin", "signInAnonymously:failure", task.exception)
             }
         }
 }
 
-
 fun loginUser(email: String, password: String, onResult: (Boolean, String) -> Unit) {
     val auth = FirebaseAuth.getInstance()
-    auth.signInWithEmailAndPassword(email, password).addOnCompleteListener { task ->
-        if (task.isSuccessful) {
-            onResult(true, "")
-        } else {
-            val errorMessage = when (val exception = task.exception) {
-                is FirebaseAuthInvalidUserException -> "이 계정은 등록되지 않았습니다. 먼저 회원가입을 해주세요."
-                is FirebaseAuthInvalidCredentialsException -> "이메일 또는 비밀번호가 잘못되었습니다. 다시 시도해주세요."
-                else -> "로그인에 실패했습니다. 잠시 후 다시 시도해주세요. 원인: ${exception?.localizedMessage ?: "알 수 없는 오류"}"
+    auth.signInWithEmailAndPassword(email.trim(), password)
+        .addOnCompleteListener { task ->
+            if (task.isSuccessful) {
+                onResult(true, "")
+            } else {
+                val ex = task.exception
+                // 统一打详细日志
+                Log.e("Login", "signIn failed: ${ex?.javaClass?.name}: ${ex?.message}", ex)
+
+                // 拿 FirebaseAuthException 的标准错误码（可能为 null）
+                val code = (ex as? com.google.firebase.auth.FirebaseAuthException)?.errorCode
+
+                val msg = when {
+                    // 设备校验相关（你这次的日志就是这个分支）
+                    (ex?.message?.contains("RecaptchaAction", ignoreCase = true) == true) -> {
+                        "设备校验失败：请使用带 Google Play 的模拟器/真机，并在 Firebase 控制台为此构建添加 SHA-256 指纹。"
+                    }
+                    code == "ERROR_INVALID_EMAIL"       -> "邮箱格式不正确"
+                    code == "ERROR_USER_NOT_FOUND"      -> "该邮箱未注册"
+                    code == "ERROR_WRONG_PASSWORD"      -> "密码错误"
+                    code == "ERROR_USER_DISABLED"       -> "账号已被禁用"
+                    else -> "登录失败：${ex?.localizedMessage ?: "未知错误"} (code=$code)"
+                }
+                onResult(false, msg)
             }
-            onResult(false, errorMessage)
         }
-    }
 }
 
 
@@ -373,7 +418,8 @@ fun LoginDialog(
 fun handleGoogleSignInResult(
     task: Task<GoogleSignInAccount>,
     context: Context,
-    navController: NavController
+    navController: NavController,
+    remote: Remote
 ) {
     try {
         val account = task.getResult(ApiException::class.java)
@@ -385,7 +431,7 @@ fun handleGoogleSignInResult(
 
             auth.signInWithCredential(credential).addOnCompleteListener { authTask ->
                 if (authTask.isSuccessful) {
-                    navController.navigate("main")
+                    navigateAfterLogin(remote, navController)
                 } else {
                     Toast.makeText(
                         context,

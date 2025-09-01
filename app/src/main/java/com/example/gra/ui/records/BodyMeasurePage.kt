@@ -13,11 +13,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
@@ -84,8 +86,8 @@ fun BodyMeasurePage(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = { navController.navigate("records") }) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(Icons.Default.KeyboardArrowLeft, contentDescription = "返回")
                     }
                 },
                 actions = {
@@ -121,14 +123,14 @@ fun BodyMeasurePage(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(com.example.gra.ui.topBlue, com.example.gra.ui.bottomGreen)
+                    )
+                )
                 .padding(inner)
                 .padding(16.dp)
         ) {
-            // 1) 六个卡片，2列网格（简单用 Row+weight 实现）
-            val parts = listOf(
-                BodyType.WAIST, BodyType.THIGH, BodyType.UPPER_ARM,
-                BodyType.HIP, BodyType.CHEST, BodyType.WEIGHT
-            )
             // 1) 六个卡片，3列网格
             for (row in BODY_DISPLAY_ORDER.chunked(3)) {
                 Row(
@@ -260,7 +262,6 @@ private fun MeasureCard(
             ) {
                 Icon(Icons.Default.Add, contentDescription = "添加")
             }
-
         }
     }
 }

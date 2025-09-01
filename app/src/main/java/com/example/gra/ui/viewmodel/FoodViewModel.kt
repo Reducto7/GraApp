@@ -17,6 +17,7 @@ import com.example.gra.ui.data.ExerciseEntity
 import com.example.gra.ui.data.ExerciseRepository
 import com.example.gra.ui.data.FoodRepository
 import com.example.gra.ui.data.FoodEntity
+import com.example.gra.ui.data.Remote
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -27,14 +28,39 @@ data class SelectedFood(
     val kcal: Int
 )
 
-
-data class Meal(
+// 每餐的条目
+data class MealItem(
     val name: String,
+    val grams: Double,
     val kcal: Int
 )
 
+// 每餐：增加 index（第几餐）和 items（明细列表）
+data class Meal(
+    val index: Int,
+    val name: String,
+    val kcal: Int,
+    val items: List<MealItem> = emptyList()
+)
+
+// —— 运动的 UI/数据模型 —— //
+data class ExerciseEntry(
+    val index: Int,     // 第几次
+    val name: String,
+    val minutes: Int,
+    val kcal: Int
+)
+
+
+
+
 class FoodViewModel(app: Application) : AndroidViewModel(app) {
 
+    // 当天所有运动
+    var exercises = mutableStateListOf<ExerciseEntry>()
+        private set
+
+    private val remote = Remote.create()
     private val repo = FoodRepository.create(app)
 
     private val LABEL_FAVORITES = "收藏"
@@ -84,62 +110,41 @@ class FoodViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // ---------- 收藏（Firestore） ----------
+    // 3) 收藏监听：替换 startFavoritesListener()
     fun startFavoritesListener(userId: String) {
         if (userId.isBlank()) return
-        Firebase.firestore.collection("users").document(userId)
-            .collection("favorites")
-            .addSnapshotListener { snap, e ->
-                if (e != null) { Log.e("FavDebug", "listen error", e); return@addSnapshotListener }
-                val ids = snap?.documents?.map { it.id }?.toSet() ?: emptySet()
-                Log.i("FavDebug", "fav ids updated, size=${ids.size}, sample=${ids.take(3)}")
-                _favoriteIds.value = ids
-            }
+        remote.observeFoodFavorites(userId)
+            .onEach { ids -> _favoriteIds.value = ids }
+            .launchIn(viewModelScope)
     }
-
-
 
     fun isFavorite(id: String) = _favoriteIds.value.contains(id)
 
+    // 4) 收藏切换：替换 toggleFavorite()
     fun toggleFavorite(
         userId: String,
         food: FoodEntity,
         onSuccess: (added: Boolean) -> Unit = {},
         onError: (Throwable) -> Unit = {}
     ) {
-        if (userId.isBlank()) {
-            onError(IllegalStateException("未登录"))
-            return
-        }
-        val doc = Firebase.firestore.collection("users").document(userId)
-            .collection("favorites").document(food.id)
-
-        val current = _favoriteIds.value
-
-        if (current.contains(food.id)) {
-            doc.delete()
-                .addOnSuccessListener {
-                    // ✅ 乐观更新：本地先改
+        if (userId.isBlank()) { onError(IllegalStateException("未登录")); return }
+        val has = _favoriteIds.value.contains(food.id)
+        viewModelScope.launch {
+            try {
+                if (has) {
+                    remote.removeFoodFavorite(userId, food.id)
                     _favoriteIds.value = _favoriteIds.value - food.id
                     onSuccess(false)
-                }
-                .addOnFailureListener { onError(it) }
-        } else {
-            doc.set(mapOf(
-                "name" to food.name,
-                "ts" to com.google.firebase.firestore.FieldValue.serverTimestamp()
-            ))
-                .addOnSuccessListener {
-                    // ✅ 乐观更新：本地先改
+                } else {
+                    remote.addFoodFavorite(userId, food.id, food.name)
                     _favoriteIds.value = _favoriteIds.value + food.id
                     onSuccess(true)
                 }
-                .addOnFailureListener { onError(it) }
+            } catch (e: Exception) {
+                onError(e)
+            }
         }
     }
-
-
-
 
     private val _selectedItems = MutableStateFlow<List<SelectedFood>>(emptyList())
     val selectedItemsFlow: StateFlow<List<SelectedFood>> = _selectedItems.asStateFlow()
@@ -164,9 +169,6 @@ class FoodViewModel(app: Application) : AndroidViewModel(app) {
     fun totalItemsCount(): Int = _selectedItems.value.size
     fun totalItemsKcal(): Int = _selectedItems.value.sumOf { it.kcal }
 
-
-    // … 你的 getTodayMealIndex / saveMeal / loadDataByDate 原样保留 …
-
     // --- UI 状态 ---
     val search: StateFlow<String> = _search
     val selectedCategory: StateFlow<String?> = _selectedCategory
@@ -177,8 +179,8 @@ class FoodViewModel(app: Application) : AndroidViewModel(app) {
     fun chooseCategory(cat: String?) { _selectedCategory.value = cat }
 
     fun addMeal(kcal: Int) {
-        val mealName = "第${meals.size + 1}餐"
-        meals.add(Meal(mealName, kcal))
+        val idx = meals.size + 1
+        meals.add(Meal(index = idx, name = "第${idx}餐", kcal = kcal, items = emptyList()))
         totalIntakeKcal.value += kcal
     }
 
@@ -195,35 +197,16 @@ class FoodViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
 
-    /**
-     * 从 Firestore 获取今天已有几餐
-     * 👉 页面: LaunchedEffect(Unit) { ... }
-     */
-    fun getTodayMealIndex(
-        userId: String,
-        date: String,
-        onResult: (Int) -> Unit
-    ) {
-        val docRef = Firebase.firestore
-            .collection("users")
-            .document(userId)
-            .collection("records")
-            .document(date)
-
-        docRef.get().addOnSuccessListener { snapshot ->
-            val meals = snapshot.get("meals") as? List<*>
-            val mealIndex = if (meals != null) meals.size + 1 else 1
-            onResult(mealIndex)
-        }.addOnFailureListener {
-            onResult(1)
+    // 5) 今天第几餐：替换 getTodayMealIndex()
+    fun getTodayMealIndex(userId: String, date: String, onResult: (Int) -> Unit) {
+        if (userId.isBlank()) { onResult(1); return }
+        viewModelScope.launch {
+            val idx = try { remote.getMealIndex(userId, date) } catch (_: Exception) { 1 }
+            onResult(idx)
         }
     }
 
-    /**
-     * 保存到 Firestore
-     * ✅ 会把现有 selectedItems 写进去
-     * ✅ 会自动计算 totalCalories 并追加
-     */
+    // 6) 保存餐次：替换 saveMeal()
     fun saveMeal(
         userId: String,
         date: String,
@@ -232,64 +215,117 @@ class FoodViewModel(app: Application) : AndroidViewModel(app) {
         onError: (Throwable) -> Unit = {}
     ) {
         if (selectedItems.isEmpty()) return
-
-        val meal = mapOf(
-            "mealIndex" to mealIndex,
-            "foods" to selectedItems.map { mapOf("name" to it.name, "grams" to it.grams, "kcal" to it.kcal) }
-        )
-
-        val docRef = Firebase.firestore
-            .collection("users").document(userId)
-            .collection("records").document(date)
-
-        Firebase.firestore.runTransaction { tr ->
-            val snap = tr.get(docRef)
-            val meals = snap.get("meals") as? ArrayList<Map<String, Any>> ?: arrayListOf()
-            meals.add(meal)
-            val newTotal = meals.sumOf { m ->
-                (m["foods"] as? List<Map<String, Any>> ?: emptyList())
-                    .sumOf { (it["kcal"] as? Number)?.toInt() ?: 0 }
+        viewModelScope.launch {
+            try {
+                val foods = selectedItems.map { Remote.MealFoodUpload(it.name, it.grams, it.kcal) }
+                remote.appendMeal(userId, date, mealIndex, foods)
+                remote.markTaskCompleted(userId, date, Remote.TaskId.MEAL)
+                clearAll()
+                onComplete()
+            } catch (e: Exception) {
+                onError(e)
             }
-            tr.set(docRef, mapOf("meals" to meals, "totalCalories" to newTotal))
-        }.addOnSuccessListener {
-            clearAll()
-            onComplete()
-        }.addOnFailureListener { e ->
-            e.printStackTrace()
-            onError(e)
         }
     }
 
-
+    // 7) 加载当日汇总：替换 loadDataByDate()
     fun loadDataByDate(date: LocalDate) {
         val userId = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        viewModelScope.launch {
+            try {
+                val d = remote.loadDay(userId, date.toString())
 
-        val docRef = Firebase.firestore
-            .collection("users")
-            .document(userId)
-            .collection("records")
-            .document(date.toString())
+                // 清空旧数据
+                meals.clear()
 
-        docRef.get().addOnSuccessListener { snapshot ->
-            val mealsList = snapshot.get("meals") as? List<Map<String, Any>> ?: emptyList()
+                // 解析每餐
+                val parsed = d.meals.map { mealMap ->
+                    val foods = mealMap["foods"] as? List<Map<String, Any>> ?: emptyList()
 
-            // 重置
-            meals.clear()
+                    val items = foods.map { f ->
+                        val name  = (f["name"]  as? String).orEmpty()
+                        val grams = (f["grams"] as? Number)?.toDouble() ?: 0.0
+                        val kcal  = (f["kcal"]  as? Number)?.toInt() ?: 0
+                        MealItem(name = name, grams = grams, kcal = kcal)
+                    }
 
-            for (meal in mealsList) {
-                val foods = meal["foods"] as? List<Map<String, Any>> ?: emptyList()
-                val kcal = foods.sumOf { (it["kcal"] as? Number)?.toInt() ?: 0 }
-                val mealIndex = meal["mealIndex"]?.toString() ?: "未知餐"
-                meals.add(Meal("第${mealIndex}餐", kcal))
+                    val idx = (mealMap["mealIndex"] as? Number)?.toInt()
+                        ?: mealMap["mealIndex"]?.toString()?.toIntOrNull()
+                        ?: (meals.size + 1)
+
+                    val kcalSum = items.sumOf { it.kcal }
+
+                    Meal(
+                        index = idx,
+                        name  = "第${idx}餐",
+                        kcal  = kcalSum,
+                        items = items
+                    )
+                }.sortedBy { it.index }
+
+                meals.addAll(parsed)
+
+                // 汇总
+                totalIntakeKcal.value = d.totalCalories
+                totalBurnKcal.value   = d.totalBurn
+
+                // 解析 exercises（来自 Remote.loadDay 的 DayData.exercises）
+                exercises.clear()
+                d.exercises.forEachIndexed { idx, ex ->
+                    val name    = (ex["name"]    as? String).orEmpty()
+                    val minutes = (ex["minutes"] as? Number)?.toInt() ?: 0
+                    val kcal    = (ex["kcal"]    as? Number)?.toInt() ?: 0
+                    exercises.add(
+                        ExerciseEntry(
+                            index = idx + 1,
+                            name = name,
+                            minutes = minutes,
+                            kcal = kcal
+                        )
+                    )
+                }
+                totalBurnKcal.value = d.totalBurn
+
+            } catch (_: Exception) {
+                meals.clear()
+                totalIntakeKcal.value = 0
+                totalBurnKcal.value   = 0
             }
+        }
+    }
 
-            totalIntakeKcal.value = snapshot.getLong("totalCalories")?.toInt() ?: 0
+    // FoodViewModel.kt
+    fun deleteMealItem(
+        date: LocalDate,
+        mealIndex: Int,     // 第X餐（1-based）
+        itemIndex: Int,     // 该餐内第几个条目（0-based）
+        onError: (Throwable) -> Unit = {}
+    ) {
+        val userId = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        viewModelScope.launch {
+            try {
+                remote.deleteMealItem(userId, date.toString(), mealIndex, itemIndex)
+                // 成功后刷新当天数据
+                loadDataByDate(date)
+            } catch (e: Exception) {
+                onError(e)
+            }
+        }
+    }
 
-            // 运动数据后期也可从同一个 doc 拉出来
-            totalBurnKcal.value = snapshot.getLong("totalBurn")?.toInt() ?: 0
-        }.addOnFailureListener {
-            println("❌ Firestore 加载失败: ${it.localizedMessage}")
-            it.printStackTrace()
+    fun deleteExerciseItem(
+        date: LocalDate,
+        itemIndex: Int,
+        onError: (Throwable) -> Unit = {}
+    ) {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        viewModelScope.launch {
+            try {
+                remote.deleteExerciseAt(uid, date.toString(), itemIndex)
+                loadDataByDate(date)  // 重新拉当天数据，UI自动更新
+            } catch (e: Exception) {
+                onError(e)
+            }
         }
     }
 }
