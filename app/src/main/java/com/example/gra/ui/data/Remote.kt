@@ -270,6 +270,43 @@ class Remote(private val db: FirebaseFirestore = Firebase.firestore) {
         return DayData(meals, totalCalories, exercises, totalBurn)
     }
 
+    // Remote.kt  —— Records (Meals & Exercises) 区域内
+
+    data class DailyEnergy(
+        val date: String,          // "YYYY-MM-DD"
+        val totalCalories: Int,    // 摄入
+        val totalBurn: Int         // 消耗
+    )
+
+    /**
+     * 订阅 [startDate, endDate]（含端点）的 records 文档，按日期升序返回每天的总摄入/总消耗。
+     * 注意：文档ID就是 ISO 日期（YYYY-MM-DD），可用 FieldPath.documentId 进行范围查询。
+     */
+    fun observeRecordsRange(
+        uid: String,
+        startDate: java.time.LocalDate,
+        endDate: java.time.LocalDate
+    ): kotlinx.coroutines.flow.Flow<List<DailyEnergy>> {
+        val start = startDate.toString()
+        val end   = endDate.toString()
+
+        val coll = user(uid).collection(COLL_RECORDS)
+        // 以 docId 作为排序/范围键（你的文档命名是 YYYY-MM-DD）
+        val q = coll
+            .orderBy(com.google.firebase.firestore.FieldPath.documentId(), com.google.firebase.firestore.Query.Direction.ASCENDING)
+            .startAt(start)
+            .endAt(end)
+
+        // 你在其它地方已经有 listenDocs<> 的工具，这里复用它（见 BodyHistory 的实现）
+        return listenDocs(q) { d ->
+            DailyEnergy(
+                date = d.id,
+                totalCalories = (d.getLong("totalCalories") ?: 0L).toInt(),
+                totalBurn     = (d.getLong("totalBurn")     ?: 0L).toInt()
+            )
+        }
+    }
+
     // ------------------------------
     // Body metrics (type-centric layout)
     // ------------------------------

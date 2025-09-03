@@ -84,7 +84,31 @@ import androidx.compose.animation.core.spring
 import androidx.compose.material.icons.outlined.Clear
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.ui.draw.rotate
-
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.draw.clip
+import kotlin.math.abs
+import kotlin.math.max
+import android.graphics.Paint
+import android.graphics.Typeface
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 
 data class ExerciseUi(
     val index: Int,
@@ -97,6 +121,7 @@ data class ExerciseItemUi(
     val kcal: Int
 )
 
+private enum class TrendMode { Line, Diff }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -110,6 +135,10 @@ fun FoodExercisePage(
     LaunchedEffect(recordDate) {
         foodViewModel.loadDataByDate(recordDate)
     }
+
+    val trendDays  by foodViewModel.trendDays.collectAsState()
+    val trendIn    by foodViewModel.trendIntake.collectAsState()
+    val trendBurn  by foodViewModel.trendBurn.collectAsState()
 
     Scaffold(
         topBar = {
@@ -150,63 +179,72 @@ fun FoodExercisePage(
             )
         }
     ) { innerPadding ->
-        Column(
+        // 背景渐变放在内容层
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
                 .background(
-                    brush = Brush.verticalGradient(
+                    Brush.verticalGradient(
                         colors = listOf(com.example.gra.ui.topBlue, com.example.gra.ui.bottomGreen)
                     )
                 )
-                .padding(16.dp)
         ) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
 
-            // —— 仅做“饮食卡” —— //
-            FoodOnlyCard(
-                totalKcal = foodViewModel.totalIntakeKcal.value,
-                meals = foodViewModel.meals.map { m ->
-                    MealUi(
-                        index = m.index,
-                        title = m.name,
-                        kcal = m.kcal,
-                        items = m.items.map { it ->
-                            FoodItemUi(
-                                name = it.name,
-                                grams = it.grams.toInt(),   // UI 用整数克数显示
-                                kcal = it.kcal
+                // 放在 FoodExercisePage.kt 的 LazyColumn 内、饮食卡 item 之前
+                item {
+                    TrendCard(
+                        days   = trendDays,
+                        intake = trendIn,
+                        burn   = trendBurn
+                    )
+                }
+
+                // —— 饮食卡 —— //
+                item {
+                    FoodOnlyCard(
+                        totalKcal = foodViewModel.totalIntakeKcal.value,
+                        meals = foodViewModel.meals.map { m ->
+                            MealUi(
+                                index = m.index,
+                                title = m.name,
+                                kcal  = m.kcal,
+                                items = m.items.map { FoodItemUi(it.name, it.grams.toInt(), it.kcal) }
                             )
+                        },
+                        onAddClick = { navController.navigate("food") },
+                        recommendedIntake = 2200,
+                        onDeleteItem = { mealIdx, itemIdx ->
+                            foodViewModel.deleteMealItem(recordDate, mealIdx, itemIdx)
                         }
                     )
-                },
-                onAddClick = { navController.navigate("food") },
-                recommendedIntake = 2200,
-                onDeleteItem = { mealIdx, itemIdx ->
-                    foodViewModel.deleteMealItem(recordDate, mealIdx, itemIdx)
                 }
-            )
-
-            Spacer(Modifier.height(16.dp))
-
-            // —— 运动卡（新增） —— //
-            // 你已有 selectedDate（顶部 DateSelector 的状态）
-            ExerciseOnlyCard(
-                totalKcal = foodViewModel.totalBurnKcal.value,
-                sessions = foodViewModel.exercises.map { e ->
-                    ExerciseUi(
-                        index = e.index,
-                        kcal  = e.kcal,
-                        items = listOf(ExerciseItemUi(e.name, e.minutes, e.kcal))
+                item { Spacer(Modifier.height(8.dp)) } // 底部留白
+                // —— 运动卡 —— //
+                item {
+                    ExerciseOnlyCard(
+                        totalKcal = foodViewModel.totalBurnKcal.value,
+                        sessions = foodViewModel.exercises.map { e ->
+                            ExerciseUi(
+                                index = e.index,
+                                kcal  = e.kcal,
+                                items = listOf(ExerciseItemUi(e.name, e.minutes, e.kcal))
+                            )
+                        },
+                        onAddClick = { navController.navigate("exercise") },
+                        recommendedBurn = 750,
+                        onDeleteSession = { sessionIdx ->
+                            foodViewModel.deleteExerciseItem(recordDate, sessionIdx)
+                        }
                     )
-                },
-                onAddClick = { navController.navigate("exercise") },
-                recommendedBurn = 750,
-                ringColor = MaterialTheme.colorScheme.secondary,
-                onDeleteSession = { sessionIdx ->
-                    foodViewModel.deleteExerciseItem(recordDate, sessionIdx)
                 }
-            )
-
+                item { Spacer(Modifier.height(8.dp)) } // 底部留白
+            }
         }
     }
 }
@@ -234,6 +272,8 @@ private fun FoodOnlyCard(
     recommendedIntake: Int,
     onDeleteItem: (mealIndex: Int, itemIndex: Int) -> Unit
 ) {
+    var listExpanded by remember { mutableStateOf(false) }   // ★ 新增：一级总开关
+    val listArrowDeg by animateFloatAsState(if (listExpanded) 180f else 0f)
     var expandedIndex by remember { mutableStateOf<Int?>(null) }
 
     ElevatedCard(
@@ -247,12 +287,12 @@ private fun FoodOnlyCard(
             Column(Modifier
                 .fillMaxWidth()
                 .animateContentSize(                 // ⭐ 高度变化自动过渡
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioNoBouncy,
-                    stiffness = Spring.StiffnessMediumLow
-                )
-            ).padding(16.dp)) {
-
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMediumLow
+                    )
+                ).padding(16.dp)
+            ) {
                 // 顶部：左文案 + 右小环
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -315,6 +355,13 @@ private fun FoodOnlyCard(
 
                 Spacer(Modifier.height(12.dp))
 
+                AnimatedVisibility(
+                    visible = listExpanded,
+                    enter = expandVertically() + fadeIn(),
+                    exit  = shrinkVertically() + fadeOut()
+                ) {
+                    Column {
+                        Spacer(Modifier.height(12.dp))
                 // 下方：每餐小计行（点按展开餐内明细）
                 meals.forEachIndexed { i, meal ->
                     val isExpanded = expandedIndex == i
@@ -398,9 +445,33 @@ private fun FoodOnlyCard(
                         Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
                     }
                 }
-
+                    }
+                }
+                // —— 分隔线（可选）——
+                Divider(
+                    modifier = Modifier
+                        .padding(top = 8.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.30f)
+                )
+// —— 底部“一级开关”行：底部居中，只放一个图标（点击展开/收起第1/2/3餐|次）——
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, bottom = 2.dp)
+                        .height(24.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { listExpanded = !listExpanded }) {
+                        Icon(
+                            imageVector = Icons.Outlined.KeyboardArrowDown,
+                            contentDescription = if (listExpanded) "收起列表" else "展开列表",
+                            modifier = Modifier.rotate(listArrowDeg),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
-
             // ★ 右上角 小型悬浮 + 按钮（支持你后续微调 x/y）
             SmallFloatingActionButton(
                 onClick = onAddClick,
@@ -518,7 +589,6 @@ private fun SmallBarLabel(text: String, color: Color) {
 @Composable
 private fun InfoBubbleIcon(
     text: String,
-    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -527,7 +597,7 @@ private fun InfoBubbleIcon(
             Icon(
                 imageVector = Icons.Outlined.Info,
                 contentDescription = "推荐摄入说明",
-                tint = tint
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
@@ -567,16 +637,17 @@ private fun ExerciseOnlyCard(
     sessions: List<ExerciseUi>,
     onAddClick: () -> Unit,
     recommendedBurn: Int,
-    ringColor: Color = MaterialTheme.colorScheme.secondary,
     onDeleteSession: (sessionIndex: Int) -> Unit
 ) {
+    var listExpanded by remember { mutableStateOf(false) }   // ★ 新增：一级总开关
+    val listArrowDeg by animateFloatAsState(if (listExpanded) 180f else 0f)
     var expandedIndex by remember { mutableStateOf<Int?>(null) }
 
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(4.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
-        elevation = CardDefaults.elevatedCardElevation(2.dp)
+        //elevation = CardDefaults.elevatedCardElevation(2.dp)
     ) {
         Box(Modifier.fillMaxWidth()) {
 
@@ -601,7 +672,7 @@ private fun ExerciseOnlyCard(
                             .weight(1f)
                             .padding(end = 12.dp)
                     ) {
-                        SmallBarLabel(text = "运动", color = ringColor)
+                        SmallBarLabel(text = "运动", color = MaterialTheme.colorScheme.secondary)
 
                         Spacer(Modifier.height(6.dp))
                         Text(
@@ -638,7 +709,7 @@ private fun ExerciseOnlyCard(
                         ) {
                             SingleRingProgress(
                                 progress = progress,
-                                ringColor = ringColor,
+                                ringColor = MaterialTheme.colorScheme.secondary,
                                 trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                                 startAngle = -90f,
                                 counterClockwise = true,
@@ -650,25 +721,32 @@ private fun ExerciseOnlyCard(
 
                 Spacer(Modifier.height(12.dp))
 
-                // 下方：每次运动小计（点按展开明细）
-                sessions.forEachIndexed { i, one ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                expandedIndex = if (expandedIndex == i) null else i
-                            }
-                            .padding(vertical = 8.dp)
-                    ) {
-                        val isExpanded = expandedIndex == i
-                        val arrowDeg by animateFloatAsState(targetValue = if (isExpanded) 180f else 0f)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { expandedIndex = if (isExpanded) null else i }
-                                .padding(vertical = 8.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                AnimatedVisibility(
+                    visible = listExpanded,
+                    enter = expandVertically() + fadeIn(),
+                    exit  = shrinkVertically() + fadeOut()
+                ) {
+                    Column {
+                        Spacer(Modifier.height(12.dp))
+                        // 下方：每次运动小计（点按展开明细）
+                        sessions.forEachIndexed { i, one ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        expandedIndex = if (expandedIndex == i) null else i
+                                    }
+                                    .padding(vertical = 8.dp)
+                            ) {
+                                val isExpanded = expandedIndex == i
+                                val arrowDeg by animateFloatAsState(targetValue = if (isExpanded) 180f else 0f)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { expandedIndex = if (isExpanded) null else i }
+                                        .padding(vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                         ) {
                         Text(
                             text = "第${one.index}次 ${one.kcal} kcal",
@@ -694,7 +772,6 @@ private fun ExerciseOnlyCard(
                             ) + fadeOut(animationSpec = tween(120))
                         ) {
                             Column(Modifier.padding(start = 12.dp, top = 6.dp, bottom = 4.dp)) {
-                                // —— 饮食卡 —— //
                                 one.items.forEach { it ->
                                     Row(
                                         modifier = Modifier
@@ -736,12 +813,40 @@ private fun ExerciseOnlyCard(
                         Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
                     }
                 }
+                    }
+                }
+                // —— 分隔线（可选）——
+                Divider(
+                    modifier = Modifier
+                        .padding(top = 8.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.30f)
+                )
+
+// —— 底部“一级开关”行：底部居中，只放一个图标（点击展开/收起第1/2/3餐|次）——
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, bottom = 2.dp)
+                        .height(24.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { listExpanded = !listExpanded }) {
+                        Icon(
+                            imageVector = Icons.Outlined.KeyboardArrowDown,
+                            contentDescription = if (listExpanded) "收起列表" else "展开列表",
+                            modifier = Modifier.rotate(listArrowDeg),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
             }
 
             // 右上角 “+”
             SmallFloatingActionButton(
                 onClick = onAddClick,
-                containerColor = ringColor,
+                containerColor = MaterialTheme.colorScheme.secondary,
                 modifier = Modifier
                     .align(Alignment.TopEnd)   // 注意：放在 Box 作用域中才能用 align
                     .offset(x = (-4).dp, y = 4.dp)
@@ -751,3 +856,412 @@ private fun ExerciseOnlyCard(
         }
     }
 }
+
+@Composable
+private fun TrendCard(
+    days: List<LocalDate>,
+    intake: List<Int>,
+    burn: List<Int>
+) {
+    var mode by remember { mutableStateOf(TrendMode.Line) }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(300.dp),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(Color.Transparent)
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            // 顶部中间的切换按钮（与 Sleep 页风格一致）
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val cs = MaterialTheme.colorScheme
+                @Composable
+                fun TabBtn(title: String, selected: Boolean, onClick: () -> Unit) {
+                    Button(
+                        onClick = onClick,
+                        modifier = Modifier.width(140.dp).height(36.dp),
+                        shape = RoundedCornerShape(4.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (selected) cs.primary else Color.White,
+                            contentColor   = if (selected) cs.onTertiary else cs.onSurface
+                        ),
+                        border = if (!selected) BorderStroke(1.dp, cs.outlineVariant) else null,
+                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
+                    ) { Text(title, style = MaterialTheme.typography.labelLarge) }
+                }
+                TabBtn("双折线图", mode == TrendMode.Line) { mode = TrendMode.Line }
+                Spacer(Modifier.width(12.dp))
+                TabBtn("卡路里差额柱状图", mode == TrendMode.Diff) { mode = TrendMode.Diff }
+            }
+
+            // 内容区
+            Box(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 0.dp)) {
+                when (mode) {
+                    TrendMode.Line -> DualLineChart(days, intake, burn)
+                    TrendMode.Diff -> DeficitBarChart(days, intake, burn)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DualLineChart(
+    days: List<LocalDate>,
+    intake: List<Int>,
+    burn: List<Int>,
+    maxDaysOnScreen: Int = 7,
+    lineStrokeDp: Dp = 2.dp
+) {
+    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val axisColor  = MaterialTheme.colorScheme.outlineVariant
+    val lineAColor = MaterialTheme.colorScheme.tertiary     // 摄入
+    val lineBColor = MaterialTheme.colorScheme.secondary    // 消耗
+
+    val yAxisWidth = 44.dp
+    val density    = LocalDensity.current
+    val layoutDir  = LocalLayoutDirection.current
+
+    // 对齐天序列
+    val count = minOf(days.size, intake.size, burn.size)
+    if (count == 0) {
+        Box(Modifier.fillMaxSize()) { }
+        return
+    }
+    val d = days.take(count)
+    val a = intake.take(count)
+    val b = burn.take(count)
+
+    // 纵向范围：取两条序列的最大值，向上取整到 200 的倍数
+    val rawMax = max(a.maxOrNull() ?: 0, b.maxOrNull() ?: 0)
+    val yMax   = ((rawMax + 199) / 200) * 200   // 向上取整到 200
+    val yStep  = 200
+
+    // 内/外边距（左轴独立画布，右侧主画布可横向滚动）
+    val outerPadPlot   = PaddingValues(start = 0.dp, end = 12.dp, top = 16.dp, bottom = 28.dp)
+    val innerTopGutter = 10.dp
+    val innerBotGutter = 22.dp
+
+    val hScroll = rememberScrollState(Int.MAX_VALUE)
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val viewportPx = with(density) {
+            (maxWidth - yAxisWidth
+                    - outerPadPlot.calculateStartPadding(layoutDir)
+                    - outerPadPlot.calculateEndPadding(layoutDir)).toPx()
+        }.coerceAtLeast(1f)
+
+        val desiredDays = maxDaysOnScreen.coerceAtLeast(1)
+        val stridePxRaw = viewportPx / desiredDays
+        val minGapPx    = with(density) { 3.dp.toPx() }
+        val gapPx       = max(stridePxRaw * 0.25f, minGapPx)   // 折线图无柱宽，保留列间距
+        val stridePx    = stridePxRaw
+
+        Row(Modifier.fillMaxSize()) {
+            // 左轴：固定刻度列（与右侧主画布同一几何：outerPad + innerGutter）
+            Canvas(modifier = Modifier.width(yAxisWidth).fillMaxHeight()) {
+                val topY = outerPadPlot.calculateTopPadding().toPx() + innerTopGutter.toPx()
+                val botY = size.height - (outerPadPlot.calculateBottomPadding().toPx() + innerBotGutter.toPx())
+                val usableH = (botY - topY).coerceAtLeast(1f)
+
+                val stepPx = usableH / yMax.toFloat() * yStep
+
+                // 刻度 + 网格（把颜色加深）
+                val gridColor = axisColor.copy(alpha = 0.55f)     // ← 比之前更清晰
+                val zeroColor = axisColor.copy(alpha = 0.90f)
+                for (v in 0..yMax step yStep) {
+                    val y = botY - (v.toFloat() / yMax.toFloat()) * usableH
+                    // 在左轴也画一条细网格，保证两侧视觉同步
+                    drawLine(
+                        color = if (v == 0) zeroColor else gridColor,
+                        start = Offset(x = size.width, y = y),
+                        end   = Offset(x = 0f,        y = y),
+                        strokeWidth = if (v == 0) 1.2f else 1f
+                    )
+                    // 刻度文字
+                    val paint = android.graphics.Paint().apply {
+                        color = labelColor.toArgb()
+                        textSize = with(this) { 10.sp.toPx() }
+                        isAntiAlias = true
+                    }
+                    drawContext.canvas.nativeCanvas.drawText("$v", 0f, y, paint)
+                }
+            }
+
+
+            // 右侧：主画布（横向滚动）
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(hScroll)
+            ) {
+                val contentW = with(density) { (d.size * stridePx).toDp() } + outerPadPlot.calculateEndPadding(layoutDir)
+                Canvas(
+                    modifier = Modifier
+                        .width(contentW)
+                        .fillMaxHeight()
+                        .padding(outerPadPlot)
+                ) {
+                    val topY  = innerTopGutter.toPx()
+                    val botY  = size.height - innerBotGutter.toPx()
+                    val leftX = 0f
+                    val rightX= size.width
+                    val usableH = (botY - topY).coerceAtLeast(1f)
+
+                    // 网格（每 200 kcal）
+                    val gridColor = axisColor.copy(alpha = 0.55f)
+                    val zeroColor = axisColor.copy(alpha = 0.90f)
+                    for (v in 0..yMax step yStep) {
+                        val y = botY - (v.toFloat() / yMax.toFloat()) * usableH
+                        drawLine(
+                            color = if (v == 0) zeroColor else gridColor,
+                            start = Offset(leftX, y),
+                            end   = Offset(rightX, y),
+                            strokeWidth = if (v == 0) 1.2f else 1f
+                        )
+                    }
+
+                    // 将值映射到像素
+                    fun xFor(i: Int): Float = i * stridePx + stridePx / 2f
+                    fun yFor(v: Int): Float = botY - (v / yMax.toFloat()) * usableH
+
+                    // 路径 A（摄入）
+                    val pathA = Path().apply {
+                        moveTo(xFor(0), yFor(a[0]))
+                        for (i in 1 until d.size) lineTo(xFor(i), yFor(a[i]))
+                    }
+                    drawPath(
+                        path = pathA,
+                        color = lineAColor,
+                        style = Stroke(width = with(density) { lineStrokeDp.toPx() }, cap = StrokeCap.Round)
+                    )
+
+                    // 路径 B（消耗）
+                    val pathB = Path().apply {
+                        moveTo(xFor(0), yFor(b[0]))
+                        for (i in 1 until d.size) lineTo(xFor(i), yFor(b[i]))
+                    }
+                    drawPath(
+                        path = pathB,
+                        color = lineBColor,
+                        style = Stroke(width = with(density) { lineStrokeDp.toPx() }, cap = StrokeCap.Round)
+                    )
+
+                    // 底部日期标签
+                    val textPaint = android.graphics.Paint().apply {
+                        color = labelColor.toArgb()
+                        textSize = with(density) { 10.sp.toPx() }
+                        textAlign = android.graphics.Paint.Align.CENTER
+                        isAntiAlias = true
+                    }
+                    d.forEachIndexed { i, day ->
+                        val x = xFor(i)
+                        drawContext.canvas.nativeCanvas.drawText(
+                            "${day.monthValue}/${day.dayOfMonth}", x, botY + with(density){12.dp.toPx()}, textPaint
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeficitBarChart(
+    days: List<java.time.LocalDate>,
+    intake: List<Int>,
+    burn: List<Int>,
+    maxDaysOnScreen: Int = 7,
+    barWidthFraction: Float = 0.30f
+) {
+    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val axisColor  = MaterialTheme.colorScheme.outlineVariant
+    val barColor   = MaterialTheme.colorScheme.primary
+
+    val yAxisWidth = 44.dp
+    val outerPadPlot   = PaddingValues(start = 0.dp, end = 12.dp, top = 16.dp, bottom = 28.dp)
+    val innerTopGutter = 12.dp
+    val innerBotGutter = 22.dp
+
+    val density   = LocalDensity.current
+    val layoutDir = LocalLayoutDirection.current
+
+    val n = minOf(days.size, intake.size, burn.size)
+    if (n == 0) { Box(Modifier.fillMaxSize()) {}; return }
+
+    val d = days.take(n)
+    val a = intake.take(n)
+    val b = burn.take(n)
+    val diff = IntArray(n) { i -> a[i] - b[i] }   // 正=盈余，负=赤字
+
+    // 正/负分开取整到 200；统一坐标 yMin..yMax（不强制 0 居中）
+    val posMax = diff.filter { it > 0 }.maxOrNull() ?: 0
+    val negMin = diff.filter { it < 0 }.minOrNull() ?: 0
+    fun roundUp200(v: Int)   = if (v <= 0) 0 else ((v + 199) / 200) * 200
+    fun roundDown200(v: Int) = if (v >= 0) 0 else -(((-v) + 199) / 200) * 200
+    val yMax = roundUp200(posMax).coerceAtLeast(200)       // 顶部 ≥ 200
+    val yMin = roundDown200(negMin).coerceAtMost(-200)     // 底部 ≤ -200
+
+    fun yFor(value: Int, topY: Float, botY: Float): Float {
+        val range = (yMax - yMin).toFloat().coerceAtLeast(1f)
+        return botY - ((value - yMin).toFloat() / range) * (botY - topY)
+    }
+
+    // 只让右侧主画布滚动；首帧在最右
+    val hScroll = rememberScrollState(Int.MAX_VALUE)
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val viewportPx = with(density) {
+            (maxWidth - yAxisWidth
+                    - outerPadPlot.calculateStartPadding(layoutDir)
+                    - outerPadPlot.calculateEndPadding(layoutDir)).toPx()
+        }.coerceAtLeast(1f)
+
+        val desiredDays = maxDaysOnScreen.coerceAtLeast(1)
+        val stridePxRaw = viewportPx / desiredDays
+        val minBarPx    = with(density) { 6.dp.toPx() }
+        val minGapPx    = with(density) { 3.dp.toPx() }
+        val barW        = (stridePxRaw * barWidthFraction).coerceAtLeast(minBarPx)
+        val gapPx       = (stridePxRaw - barW).coerceAtLeast(minGapPx)
+        val stridePx    = barW + gapPx
+
+        Row(Modifier.fillMaxSize()) {
+            // 左：固定刻度列（使用 outerPad + innerGutter 的几何）
+            Canvas(
+                modifier = Modifier
+                    .width(yAxisWidth)
+                    .fillMaxHeight()
+            ) {
+                val topY = outerPadPlot.calculateTopPadding().toPx() + with(this){ innerTopGutter.toPx() }
+                val botY = size.height - (outerPadPlot.calculateBottomPadding().toPx() + with(this){ innerBotGutter.toPx() })
+
+                val paint = android.graphics.Paint().apply {
+                    color = labelColor.toArgb()
+                    textSize = with(this@Canvas) { 10.sp.toPx() }
+                    isAntiAlias = true
+                }
+                for (v in yMin..yMax step 200) {
+                    val y = yFor(v, topY, botY)
+                    drawContext.canvas.nativeCanvas.drawText(v.toString(), 0f, y, paint)
+                }
+            }
+
+            // 右：主画布（横向滚动；注意：这里 Canvas 已经 .padding(outerPadPlot) —— 因此 draw 内部不再加 outerPad）
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(hScroll)
+            ) {
+                val contentPx = d.size * stridePx
+                val contentW = with(density) { kotlin.math.max(contentPx, viewportPx).toDp() } +
+                        outerPadPlot.calculateEndPadding(layoutDir)
+
+                Canvas(
+                    modifier = Modifier
+                        .width(contentW)
+                        .fillMaxHeight()
+                        .padding(outerPadPlot)    // ← 右侧 Canvas 已有 padding
+                ) {
+                    // ⚠️ 这里不要再把 outerPad 加进 topY/botY，否则会和左侧不一致
+                    val topY  = with(this){ innerTopGutter.toPx() }
+                    val botY  = size.height - with(this){ innerBotGutter.toPx() }
+                    val leftX = 0f
+                    val rightX= size.width
+
+                    // 网格（每 200；0 线加重）
+                    val gridColor = axisColor.copy(alpha = 0.55f)
+                    val zeroColor = axisColor.copy(alpha = 0.95f)
+                    for (v in yMin..yMax step 200) {
+                        val y = yFor(v, topY, botY)
+                        drawLine(
+                            color = if (v == 0) zeroColor else gridColor,
+                            start = Offset(leftX, y), end = Offset(rightX, y),
+                            strokeWidth = if (v == 0) 1.2f else 1f
+                        )
+                    }
+
+                    // 柱与标签
+                    val rPx      = with(this) { 2.dp.toPx() }   // 圆角半径 2dp
+                    val labelGap = with(this) { 6.dp.toPx() }
+
+                    val textPaint = android.graphics.Paint().apply {
+                        color = labelColor.toArgb()
+                        textSize = with(this@Canvas) { 10.sp.toPx() }
+                        textAlign = android.graphics.Paint.Align.CENTER
+                        isAntiAlias = true
+                    }
+                    fun xLeft(i: Int): Float = i * stridePx + (stridePx - barW) / 2f
+
+                    diff.forEachIndexed { i, v ->
+                        if (v == 0) return@forEachIndexed  // 0 值不画柱/标签
+
+                        val x  = xLeft(i)
+                        val y0 = yFor(0, topY, botY)
+                        val yV = yFor(v, topY, botY)
+                        val top    = kotlin.math.min(y0, yV)
+                        val bottom = kotlin.math.max(y0, yV)
+
+                        // 四角独立圆角（正值：上圆下直；负值：上直下圆）
+                        val rr = if (v > 0) {
+                            androidx.compose.ui.geometry.RoundRect(
+                                left = x, top = top, right = x + barW, bottom = bottom,
+                                topLeftCornerRadius     = androidx.compose.ui.geometry.CornerRadius(rPx, rPx),
+                                topRightCornerRadius    = androidx.compose.ui.geometry.CornerRadius(rPx, rPx),
+                                bottomRightCornerRadius = androidx.compose.ui.geometry.CornerRadius.Zero,
+                                bottomLeftCornerRadius  = androidx.compose.ui.geometry.CornerRadius.Zero
+                            )
+                        } else {
+                            androidx.compose.ui.geometry.RoundRect(
+                                left = x, top = top, right = x + barW, bottom = bottom,
+                                topLeftCornerRadius     = androidx.compose.ui.geometry.CornerRadius.Zero,
+                                topRightCornerRadius    = androidx.compose.ui.geometry.CornerRadius.Zero,
+                                bottomRightCornerRadius = androidx.compose.ui.geometry.CornerRadius(rPx, rPx),
+                                bottomLeftCornerRadius  = androidx.compose.ui.geometry.CornerRadius(rPx, rPx)
+                            )
+                        }
+                        val path = Path().apply { addRoundRect(rr) }
+                        drawPath(path = path, color = barColor)
+
+                        // 数值标签：正值在柱顶上方；负值在柱底下方
+                        val labelY = if (v > 0) (top - labelGap)
+                        else (bottom + labelGap + textPaint.textSize * 0.15f)
+                        drawContext.canvas.nativeCanvas.drawText(
+                            v.toString(), x + barW / 2f, labelY, textPaint
+                        )
+                    }
+
+                    // 底部日期标签
+                    val datePaint = android.graphics.Paint().apply {
+                        color = labelColor.toArgb()
+                        textSize = with(this@Canvas) { 10.sp.toPx() }
+                        textAlign = android.graphics.Paint.Align.CENTER
+                        isAntiAlias = true
+                    }
+                    d.forEachIndexed { i, day ->
+                        val cx = i * stridePx + stridePx / 2f
+                        drawContext.canvas.nativeCanvas.drawText(
+                            "${day.monthValue}/${day.dayOfMonth}",
+                            cx,
+                            botY + with(this) { 12.dp.toPx() },
+                            datePaint
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+
+
+
+
+
+

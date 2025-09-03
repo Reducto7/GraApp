@@ -295,37 +295,85 @@ class FoodViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // FoodViewModel.kt
-    fun deleteMealItem(
-        date: LocalDate,
-        mealIndex: Int,     // 第X餐（1-based）
-        itemIndex: Int,     // 该餐内第几个条目（0-based）
-        onError: (Throwable) -> Unit = {}
-    ) {
-        val userId = FirebaseAuth.getInstance().currentUser?.uid ?: return
+    fun deleteMealItem(date: LocalDate, mealIndex: Int, itemIndex: Int, onError: (Throwable)->Unit = {}) {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
         viewModelScope.launch {
             try {
-                remote.deleteMealItem(userId, date.toString(), mealIndex, itemIndex)
-                // 成功后刷新当天数据
-                loadDataByDate(date)
-            } catch (e: Exception) {
-                onError(e)
-            }
+                remote.deleteMealItem(uid, date.toString(), mealIndex, itemIndex)
+                loadDataByDate(date)            // 已有
+            } catch (e: Exception) { onError(e) }
         }
     }
 
-    fun deleteExerciseItem(
-        date: LocalDate,
-        itemIndex: Int,
-        onError: (Throwable) -> Unit = {}
-    ) {
+    fun deleteExerciseItem(date: LocalDate, itemIndex: Int, onError: (Throwable)->Unit = {}) {
         val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
         viewModelScope.launch {
             try {
                 remote.deleteExerciseAt(uid, date.toString(), itemIndex)
-                loadDataByDate(date)  // 重新拉当天数据，UI自动更新
-            } catch (e: Exception) {
-                onError(e)
-            }
+                loadDataByDate(date)            // 已有
+            } catch (e: Exception) { onError(e) }
         }
     }
+
+
+    // 默认窗口：最近 60 天（按需改）
+    private val trendWindowDays = 60
+    private val _trendRange = MutableStateFlow(
+        java.time.LocalDate.now().minusDays(trendWindowDays.toLong() - 1) to java.time.LocalDate.now()
+    )
+    val trendRange = _trendRange.asStateFlow()
+
+    fun setTrendRange(daysBack: Int = trendWindowDays, endDate: java.time.LocalDate = java.time.LocalDate.now()) {
+        _trendRange.value = endDate.minusDays(daysBack.toLong() - 1) to endDate
+    }
+
+    private val uid get() = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+    private val hasUser get() = uid.isNotBlank()
+
+    // 订阅：某个日期区间内的每日总摄入/总消耗
+    private val trendFlow: StateFlow<List<Remote.DailyEnergy>> =
+        trendRange.flatMapLatest { (start, end) ->
+            if (!hasUser) flowOf(emptyList())
+            else remote.observeRecordsRange(uid, start, end)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+
+    data class TrendSeries(
+        val days: List<LocalDate>,
+        val intake: List<Int>,
+        val burn: List<Int>
+    )
+    // 订阅结果 + 窗口  =>  连续日期轴（缺失补0）
+    private val trendSeries: StateFlow<TrendSeries> =
+        combine(trendRange, trendFlow) { (start, end), list ->
+            val byDate = list.associateBy { it.date }  // key: "YYYY-MM-DD"
+            val days   = ArrayList<LocalDate>()
+            val intake = ArrayList<Int>()
+            val burn   = ArrayList<Int>()
+
+            var d = start
+            while (!d.isAfter(end)) {
+                val key = d.toString()
+                val e   = byDate[key]
+                days.add(d)
+                intake.add(e?.totalCalories ?: 0)
+                burn.add(e?.totalBurn ?: 0)
+                d = d.plusDays(1)
+            }
+            TrendSeries(days, intake, burn)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000),
+            TrendSeries(emptyList(), emptyList(), emptyList()))
+
+    // 若你页面已用三个 StateFlow，就继续暴露三条（从 series 拆出来）
+    val trendDays: StateFlow<List<LocalDate>> =
+        trendSeries.map { it.days }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val trendIntake: StateFlow<List<Int>> =
+        trendSeries.map { it.intake }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val trendBurn: StateFlow<List<Int>> =
+        trendSeries.map { it.burn }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 }

@@ -205,8 +205,8 @@ private fun SummaryCard(
         animationSpec = tween(900)
     )
 
-    val base = MaterialTheme.colorScheme.primary
-    val intakeColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f + 0.65f * intakeProgress)
+    val base = MaterialTheme.colorScheme.tertiary
+    val intakeColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.35f + 0.65f * intakeProgress)
     val burnColor   = MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f + 0.65f * burnProgress)
 
     ElevatedCard(
@@ -223,7 +223,7 @@ private fun SummaryCard(
                 // 左侧信息
                 LabelWithIndicator(
                     text = "饮食",
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.tertiary,
                     style = IndicatorStyle.Bar
                 )
                 Text("$intakeKcal kcal", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
