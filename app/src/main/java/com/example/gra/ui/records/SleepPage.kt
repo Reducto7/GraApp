@@ -163,8 +163,14 @@ fun SleepPage(
                         TabBtn("具体时间", chartTab == 1) { chartTab = 1 }
                     }
 
+                    Spacer(Modifier.height(12.dp))
+
                     // 内容区
-                    Box(Modifier.fillMaxSize()) {
+                    Box(
+                        Modifier.fillMaxSize()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.White.copy(alpha = 0.4f))
+                    ) {
                         when (chartTab) {
                             // ✅ 新增：按“睡眠时长”显示
                             0 -> SleepDurationBarChart(

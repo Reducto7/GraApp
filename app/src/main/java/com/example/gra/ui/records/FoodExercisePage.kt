@@ -101,14 +101,20 @@ import kotlin.math.max
 import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlin.math.hypot
+import kotlin.math.sqrt
 
 data class ExerciseUi(
     val index: Int,
@@ -193,7 +199,6 @@ fun FoodExercisePage(
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
 
                 // 放在 FoodExercisePage.kt 的 LazyColumn 内、饮食卡 item 之前
@@ -203,6 +208,7 @@ fun FoodExercisePage(
                         intake = trendIn,
                         burn   = trendBurn
                     )
+                    Spacer(Modifier.height(16.dp))
                 }
 
                 // —— 饮食卡 —— //
@@ -223,8 +229,8 @@ fun FoodExercisePage(
                             foodViewModel.deleteMealItem(recordDate, mealIdx, itemIdx)
                         }
                     )
+                    Spacer(Modifier.height(12.dp))
                 }
-                item { Spacer(Modifier.height(8.dp)) } // 底部留白
                 // —— 运动卡 —— //
                 item {
                     ExerciseOnlyCard(
@@ -278,9 +284,9 @@ private fun FoodOnlyCard(
 
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
-        elevation = CardDefaults.elevatedCardElevation(2.dp)
+        //elevation = CardDefaults.elevatedCardElevation(2.dp)
     ) {
         Box(Modifier.fillMaxWidth()) {
 
@@ -305,7 +311,7 @@ private fun FoodOnlyCard(
                     ) {
 
                         Spacer(Modifier.height(4.dp))
-                        SmallBarLabel(text = "饮食", color = MaterialTheme.colorScheme.primary)
+                        SmallBarLabel(text = "饮食", color = MaterialTheme.colorScheme.tertiary)
 
                         Spacer(Modifier.height(6.dp))
                         Text(
@@ -329,9 +335,10 @@ private fun FoodOnlyCard(
                     }
 
                     val progress by animateFloatAsState(
-                        targetValue = (totalKcal / recommendedIntake.toFloat()).coerceIn(0f, 1f),
+                        targetValue = totalKcal / recommendedIntake.toFloat(),
                         animationSpec = tween(900)
                     )
+
                     // 预留右上角 + 的空间（不参与测量的内容尺寸）
                     Box(modifier = Modifier.padding(end = 44.dp)) {
                         // 真实的环形绘制区域：给出确定的宽高，Row 才能算出“行高”
@@ -341,13 +348,12 @@ private fun FoodOnlyCard(
                                 .offset(x = (-8).dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            SingleRingProgress(
-                                progress = progress,
-                                ringColor = MaterialTheme.colorScheme.primary,
-                                trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            GradientRingProgress(
+                                progress   = progress,
+                                baseColor  = MaterialTheme.colorScheme.tertiary,     // 你想要的主色
+                                trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),     // 轨道浅灰
                                 startAngle = -90f,
-                                counterClockwise = true,
-                                stroke = 18.dp
+                                stroke     = 14.dp
                             )
                         }
                     }
@@ -475,7 +481,7 @@ private fun FoodOnlyCard(
             // ★ 右上角 小型悬浮 + 按钮（支持你后续微调 x/y）
             SmallFloatingActionButton(
                 onClick = onAddClick,
-                containerColor = MaterialTheme.colorScheme.primary,
+                containerColor = MaterialTheme.colorScheme.tertiary,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .offset(x = (-4).dp, y = 4.dp) // 你说后续会自行微调；向左请用负值
@@ -488,87 +494,98 @@ private fun FoodOnlyCard(
 
 // —— 单环进度：起始 -90°、支持逆时针（保持与外部一致） —— //
 @Composable
-private fun SingleRingProgress(
-    progress: Float,                 // 0f..1f
-    ringColor: Color,                // 注意：这里传“纯色”，不要再做 alpha 放大
+fun GradientRingProgress(
+    progress: Float,
+    baseColor: Color,
     trackColor: Color,
     startAngle: Float = -90f,
-    counterClockwise: Boolean = true,
-    stroke: Dp = 16.dp
+    stroke: Dp = 16.dp,
+    counterClockwise: Boolean = true   // 默认逆时针
 ) {
-    val sweep = (if (counterClockwise) -360f else 360f) * progress
 
     Canvas(Modifier.fillMaxSize()) {
         val s = stroke.toPx()
         val r = (size.minDimension - s) / 2f
-        val rectTopLeft = Offset(center.x - r, center.y - r)
-        val rectSize = Size(r * 2, r * 2)
+        val rect = androidx.compose.ui.geometry.Rect(
+            center.x - r, center.y - r, center.x + r, center.y + r
+        )
 
-        // 轨道
+        // 底层轨道
         drawCircle(
             color = trackColor,
             radius = r,
             center = center,
             style = Stroke(width = s, cap = StrokeCap.Round)
         )
+        if (progress <= 0f) return@Canvas
 
-        val total = kotlin.math.abs(sweep)
-        if (total < 0.1f) return@Canvas
+        // 渐变
+        val startC = baseColor
+        val endC   = baseColor.copy(alpha = 0.35f)
 
-        // —— 使用分段绘制实现“沿弧线渐变” —— //
+        val totalSweep = 360f * progress
         val dir = if (counterClockwise) -1f else 1f
-        val startAlpha = 0.35f
-        val endAlpha = 1.0f
 
-        // 每段角度（越小越细腻，性能略降）；4° ≈ 90 段/整圈
-        val segDeg = 4f
-        val segments = kotlin.math.max(1, (total / segDeg).roundToInt())
-        val overlap = 0.12f // 小重叠避免缝隙
+        // 第一段：最多画到“整圈 - ε”，避免 360° 空笔
+        val epsilon = 0.001f
+        val sweep1 = minOf(totalSweep, 360f - epsilon)
+        val extra  = (totalSweep - 360f).coerceAtLeast(0f)
 
-        for (i in 0 until segments) {
-            val t0 = i / segments.toFloat()
-            val t1 = (i + 1) / segments.toFloat()
-            val tMid = (t0 + t1) / 2f
-            val alpha = startAlpha + (endAlpha - startAlpha) * tMid
-            val color = ringColor.copy(alpha = alpha)
+        // 旋转到正确的起笔处，然后始终用“正角度”作图
+        val pivotGrad  = if (dir < 0f) startAngle - sweep1 else startAngle
+        val pivotExtra = if (dir < 0f) startAngle - extra  else startAngle
 
-            val segStart = startAngle + dir * (total * t0)
-            val segSweep = dir * (total / segments + if (i < segments - 1) overlap else 0f)
+        // 渐变 stops：把第一段的弧长压缩到 [0..1]，之后保持终点色
+        val t = (sweep1 / 360f).coerceIn(0.001f, 1f)
+        val brush = Brush.sweepGradient(
+            colorStops = arrayOf(
+                0f to startC,
+                t  to endC,
+                1f to startC
+            ),
+            center = center
+        )
 
-            drawArc(
-                color = color,
-                startAngle = segStart,
-                sweepAngle = segSweep,
-                useCenter = false,
-                topLeft = rectTopLeft,
-                size = rectSize,
-                // 用 Butt 防止重叠处变粗；两端圆帽在下面单独补
-                style = Stroke(width = s, cap = StrokeCap.Butt)
-            )
+        // —— 第一圈（或不足一圈）渐变 —— //
+        if (sweep1 > 0f) {
+            withTransform({ rotate(pivotGrad, pivot = center) }) {
+                val path = Path().apply {
+                    arcTo(
+                        rect = rect,
+                        startAngleDegrees = 0f,
+                        sweepAngleDegrees = sweep1,   // 注意：< 360
+                        forceMoveTo = true
+                    )
+                }
+                drawPath(
+                    path = path,
+                    brush = brush,
+                    style = Stroke(width = s, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                )
+            }
         }
 
-        // 两端小“圆帽”，保证整体端点圆润
-        val capSweep = dir * 0.0001f
-        drawArc(
-            color = ringColor.copy(alpha = startAlpha),
-            startAngle = startAngle,
-            sweepAngle = capSweep,
-            useCenter = false,
-            topLeft = rectTopLeft,
-            size = rectSize,
-            style = Stroke(width = s, cap = StrokeCap.Round)
-        )
-        drawArc(
-            color = ringColor.copy(alpha = endAlpha),
-            startAngle = startAngle + sweep - capSweep,
-            sweepAngle = capSweep,
-            useCenter = false,
-            topLeft = rectTopLeft,
-            size = rectSize,
-            style = Stroke(width = s, cap = StrokeCap.Round)
-        )
+        // —— 超出 1.0 的部分：用终点色覆盖起点处（叠加在第一圈之上）—— //
+        if (extra > 0f) {
+            withTransform({ rotate(pivotExtra, pivot = center) }) {
+                val path = Path().apply {
+                    arcTo(
+                        rect = rect,
+                        startAngleDegrees = 0f,
+                        sweepAngleDegrees = extra,
+                        forceMoveTo = true
+                    )
+                }
+                drawPath(
+                    path = path,
+                    color = startC, // 纯终点色，叠加覆盖
+                    style = Stroke(width = s, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                )
+            }
+        }
     }
 }
+
 
 
 // —— 小色条标签（与外部 SummaryCard 的 LabelWithIndicator 视觉一致思路） —— //
@@ -645,7 +662,7 @@ private fun ExerciseOnlyCard(
 
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(4.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
         //elevation = CardDefaults.elevatedCardElevation(2.dp)
     ) {
@@ -707,13 +724,12 @@ private fun ExerciseOnlyCard(
                                 .offset(x = (-8).dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            SingleRingProgress(
-                                progress = progress,
-                                ringColor = MaterialTheme.colorScheme.secondary,
-                                trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            GradientRingProgress(
+                                progress   = progress,
+                                baseColor  = MaterialTheme.colorScheme.secondary,     // 你想要的主色
+                                trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),     // 轨道浅灰
                                 startAngle = -90f,
-                                counterClockwise = true,
-                                stroke = 18.dp
+                                stroke     = 14.dp
                             )
                         }
                     }
@@ -864,19 +880,17 @@ private fun TrendCard(
     burn: List<Int>
 ) {
     var mode by remember { mutableStateOf(TrendMode.Line) }
-    Card(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(300.dp),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(Color.Transparent)
+            .height(300.dp)
+
     ) {
         Column(Modifier.fillMaxSize()) {
             // 顶部中间的切换按钮（与 Sleep 页风格一致）
             Row(
                 Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
+                    .fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -900,8 +914,14 @@ private fun TrendCard(
                 TabBtn("卡路里差额柱状图", mode == TrendMode.Diff) { mode = TrendMode.Diff }
             }
 
+            Spacer(Modifier.height(12.dp))
+
             // 内容区
-            Box(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 0.dp)) {
+            Box(
+                Modifier.fillMaxSize()
+                    .clip(RoundedCornerShape(16.dp))                  // 让背景有圆角
+                    .background(Color.White.copy(alpha = 0.5f))       // 半透明背景,
+            ) {
                 when (mode) {
                     TrendMode.Line -> DualLineChart(days, intake, burn)
                     TrendMode.Diff -> DeficitBarChart(days, intake, burn)
@@ -923,10 +943,20 @@ private fun DualLineChart(
     val axisColor  = MaterialTheme.colorScheme.outlineVariant
     val lineAColor = MaterialTheme.colorScheme.tertiary     // 摄入
     val lineBColor = MaterialTheme.colorScheme.secondary    // 消耗
+    val cs = MaterialTheme.colorScheme
 
     val yAxisWidth = 44.dp
     val density    = LocalDensity.current
     val layoutDir  = LocalLayoutDirection.current
+
+    // 交互 & UI 常量
+    val pointRadiusDp      = 3.dp         // 空心圆半径
+    val pointStrokeDp      = 2.dp           // 空心圆线宽
+    val hitRadiusDp        = 16.dp          // 命中半径（手指可点击范围）
+    val bubblePaddingDp    = 8.dp
+    val bubbleCornerDp     = 8.dp
+    val bubbleArrowSizeDp  = 6.dp
+    val bubbleTextSizeSp   = 12.sp
 
     // 对齐天序列
     val count = minOf(days.size, intake.size, burn.size)
@@ -938,19 +968,24 @@ private fun DualLineChart(
     val a = intake.take(count)
     val b = burn.take(count)
 
-    // 纵向范围：取两条序列的最大值，向上取整到 200 的倍数
+    // 纵向范围
     val rawMax = max(a.maxOrNull() ?: 0, b.maxOrNull() ?: 0)
     val yMax   = ((rawMax + 199) / 200) * 200   // 向上取整到 200
     val yStep  = 200
 
-    // 内/外边距（左轴独立画布，右侧主画布可横向滚动）
+    // 内/外边距
     val outerPadPlot   = PaddingValues(start = 0.dp, end = 12.dp, top = 16.dp, bottom = 28.dp)
     val innerTopGutter = 10.dp
     val innerBotGutter = 22.dp
 
+    // 横向滚动
     val hScroll = rememberScrollState(Int.MAX_VALUE)
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    // 选中点状态（索引 + 系列：0=摄入(A), 1=消耗(B)）
+    data class Selection(val index: Int, val series: Int)
+    var selection by remember { mutableStateOf<Selection?>(null) }
+
+    BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         val viewportPx = with(density) {
             (maxWidth - yAxisWidth
                     - outerPadPlot.calculateStartPadding(layoutDir)
@@ -960,31 +995,33 @@ private fun DualLineChart(
         val desiredDays = maxDaysOnScreen.coerceAtLeast(1)
         val stridePxRaw = viewportPx / desiredDays
         val minGapPx    = with(density) { 3.dp.toPx() }
-        val gapPx       = max(stridePxRaw * 0.25f, minGapPx)   // 折线图无柱宽，保留列间距
+        val gapPx       = max(stridePxRaw * 0.25f, minGapPx)
         val stridePx    = stridePxRaw
 
+        val pointRadiusPx   = with(density) { pointRadiusDp.toPx() }
+        val pointStrokePx   = with(density) { pointStrokeDp.toPx() }
+        val hitRadiusPx     = with(density) { hitRadiusDp.toPx() }
+        val bubblePaddingPx = with(density) { bubblePaddingDp.toPx() }
+        val bubbleCornerPx  = with(density) { bubbleCornerDp.toPx() }
+        val bubbleArrowPx   = with(density) { bubbleArrowSizeDp.toPx() }
+
         Row(Modifier.fillMaxSize()) {
-            // 左轴：固定刻度列（与右侧主画布同一几何：outerPad + innerGutter）
+            // 左轴：固定刻度列
             Canvas(modifier = Modifier.width(yAxisWidth).fillMaxHeight()) {
                 val topY = outerPadPlot.calculateTopPadding().toPx() + innerTopGutter.toPx()
                 val botY = size.height - (outerPadPlot.calculateBottomPadding().toPx() + innerBotGutter.toPx())
                 val usableH = (botY - topY).coerceAtLeast(1f)
 
-                val stepPx = usableH / yMax.toFloat() * yStep
-
-                // 刻度 + 网格（把颜色加深）
-                val gridColor = axisColor.copy(alpha = 0.55f)     // ← 比之前更清晰
+                val gridColor = axisColor.copy(alpha = 0.55f)
                 val zeroColor = axisColor.copy(alpha = 0.90f)
                 for (v in 0..yMax step yStep) {
                     val y = botY - (v.toFloat() / yMax.toFloat()) * usableH
-                    // 在左轴也画一条细网格，保证两侧视觉同步
                     drawLine(
                         color = if (v == 0) zeroColor else gridColor,
                         start = Offset(x = size.width, y = y),
                         end   = Offset(x = 0f,        y = y),
                         strokeWidth = if (v == 0) 1.2f else 1f
                     )
-                    // 刻度文字
                     val paint = android.graphics.Paint().apply {
                         color = labelColor.toArgb()
                         textSize = with(this) { 10.sp.toPx() }
@@ -994,83 +1031,210 @@ private fun DualLineChart(
                 }
             }
 
-
-            // 右侧：主画布（横向滚动）
+            // 右侧：主画布（横向可滚）
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .horizontalScroll(hScroll)
             ) {
                 val contentW = with(density) { (d.size * stridePx).toDp() } + outerPadPlot.calculateEndPadding(layoutDir)
-                Canvas(
+
+                // 用 Box 叠一层指针输入，内部是 Canvas（方便把点击坐标传入）
+                Box(
                     modifier = Modifier
                         .width(contentW)
                         .fillMaxHeight()
                         .padding(outerPadPlot)
                 ) {
-                    val topY  = innerTopGutter.toPx()
-                    val botY  = size.height - innerBotGutter.toPx()
-                    val leftX = 0f
-                    val rightX= size.width
-                    val usableH = (botY - topY).coerceAtLeast(1f)
+                    Canvas(
+                        modifier = Modifier
+                            .matchParentSize()
+                            // 点击命中最近圆点，计算并记录 selection
+                            .pointerInput(d, a, b, yMax, stridePx, hScroll.value) {
+                                detectTapGestures { offset ->
+                                    // 几何参数
+                                    val topY  = innerTopGutter.toPx()
+                                    val botY  = size.height - innerBotGutter.toPx()
+                                    val usableH = (botY - topY).coerceAtLeast(1f)
 
-                    // 网格（每 200 kcal）
-                    val gridColor = axisColor.copy(alpha = 0.55f)
-                    val zeroColor = axisColor.copy(alpha = 0.90f)
-                    for (v in 0..yMax step yStep) {
-                        val y = botY - (v.toFloat() / yMax.toFloat()) * usableH
-                        drawLine(
-                            color = if (v == 0) zeroColor else gridColor,
-                            start = Offset(leftX, y),
-                            end   = Offset(rightX, y),
-                            strokeWidth = if (v == 0) 1.2f else 1f
+                                    fun xFor(i: Int): Float = i * stridePx + stridePx / 2f
+                                    fun yFor(v: Int): Float = botY - (v / yMax.toFloat()) * usableH
+
+                                    // 找到最近的列索引
+                                    val rawIndex = ((offset.x) / stridePx).toInt().coerceIn(0, d.lastIndex)
+
+                                    // 在附近 1 列范围内挑最近点，提高命中率
+                                    val candidates = (rawIndex - 1..rawIndex + 1).filter { it in 0..d.lastIndex }
+
+                                    var bestSel: Selection? = null
+                                    var bestDist = Float.MAX_VALUE
+
+                                    candidates.forEach { i ->
+                                        val xa = xFor(i)
+                                        val ya = yFor(a[i])
+                                        val xb = xFor(i)
+                                        val yb = yFor(b[i])
+
+                                        val da = hypot(offset.x - xa, offset.y - ya)
+                                        val db = hypot(offset.x - xb, offset.y - yb)
+
+                                        if (da < bestDist) { bestDist = da; bestSel = Selection(i, 0) }
+                                        if (db < bestDist) { bestDist = db; bestSel = Selection(i, 1) }
+                                    }
+
+                                    selection = if (bestDist <= hitRadiusPx) bestSel else null
+                                }
+                            }
+                    ) {
+                        val topY  = innerTopGutter.toPx()
+                        val botY  = size.height - innerBotGutter.toPx()
+                        val leftX = 0f
+                        val rightX= size.width
+                        val usableH = (botY - topY).coerceAtLeast(1f)
+
+                        // 网格
+                        val gridColor = axisColor.copy(alpha = 0.55f)
+                        val zeroColor = axisColor.copy(alpha = 0.90f)
+                        for (v in 0..yMax step yStep) {
+                            val y = botY - (v.toFloat() / yMax.toFloat()) * usableH
+                            drawLine(
+                                color = if (v == 0) zeroColor else gridColor,
+                                start = Offset(leftX, y),
+                                end   = Offset(rightX, y),
+                                strokeWidth = if (v == 0) 1.2f else 1f
+                            )
+                        }
+
+                        // 像素映射保持原样
+                        fun xFor(i: Int): Float = i * stridePx + stridePx / 2f
+                        fun yFor(v: Int): Float = botY - (v / yMax.toFloat()) * usableH
+
+                        // 摄入 A
+                        val ptsA = List(d.size) { i -> Offset(xFor(i), yFor(a[i])) }
+                        val pathA = buildMonotonePath(ptsA)
+                        drawPath(
+                            path = pathA,
+                            color = lineAColor,
+                            style = Stroke(width = with(density){ lineStrokeDp.toPx() }, cap = StrokeCap.Round, join = StrokeJoin.Round)
                         )
-                    }
 
-                    // 将值映射到像素
-                    fun xFor(i: Int): Float = i * stridePx + stridePx / 2f
-                    fun yFor(v: Int): Float = botY - (v / yMax.toFloat()) * usableH
-
-                    // 路径 A（摄入）
-                    val pathA = Path().apply {
-                        moveTo(xFor(0), yFor(a[0]))
-                        for (i in 1 until d.size) lineTo(xFor(i), yFor(a[i]))
-                    }
-                    drawPath(
-                        path = pathA,
-                        color = lineAColor,
-                        style = Stroke(width = with(density) { lineStrokeDp.toPx() }, cap = StrokeCap.Round)
-                    )
-
-                    // 路径 B（消耗）
-                    val pathB = Path().apply {
-                        moveTo(xFor(0), yFor(b[0]))
-                        for (i in 1 until d.size) lineTo(xFor(i), yFor(b[i]))
-                    }
-                    drawPath(
-                        path = pathB,
-                        color = lineBColor,
-                        style = Stroke(width = with(density) { lineStrokeDp.toPx() }, cap = StrokeCap.Round)
-                    )
-
-                    // 底部日期标签
-                    val textPaint = android.graphics.Paint().apply {
-                        color = labelColor.toArgb()
-                        textSize = with(density) { 10.sp.toPx() }
-                        textAlign = android.graphics.Paint.Align.CENTER
-                        isAntiAlias = true
-                    }
-                    d.forEachIndexed { i, day ->
-                        val x = xFor(i)
-                        drawContext.canvas.nativeCanvas.drawText(
-                            "${day.monthValue}/${day.dayOfMonth}", x, botY + with(density){12.dp.toPx()}, textPaint
+                        // 消耗 B
+                        val ptsB = List(d.size) { i -> Offset(xFor(i), yFor(b[i])) }
+                        val pathB = buildMonotonePath(ptsB)
+                        drawPath(
+                            path = pathB,
+                            color = lineBColor,
+                            style = Stroke(width = with(density){ lineStrokeDp.toPx() }, cap = StrokeCap.Round, join = StrokeJoin.Round)
                         )
+
+                        // 选中点额外高亮（外圈描边一圈）
+                        selection?.let { sel ->
+                            val i = sel.index
+                            val isA = sel.series == 0
+                            val v   = if (isA) a[i] else b[i]
+                            val c   = if (isA) lineAColor else lineBColor
+                            val cx  = xFor(i)
+                            val cy  = yFor(v)
+
+                            drawCircle(
+                                color = c,
+                                radius = 4.dp.toPx(), // 外圈半径稍大
+                                center = Offset(cx, cy),
+                            )
+                            drawCircle(
+                                color = Color.White,
+                                radius = 2.dp.toPx(), // 外圈半径稍大
+                                center = Offset(cx, cy),
+                            )
+                        }
+
+                        // 底部日期标签
+                        val textPaint = android.graphics.Paint().apply {
+                            color = labelColor.toArgb()
+                            textSize = with(density) { 10.sp.toPx() }
+                            textAlign = android.graphics.Paint.Align.CENTER
+                            isAntiAlias = true
+                        }
+                        d.forEachIndexed { i, day ->
+                            val x = xFor(i)
+                            drawContext.canvas.nativeCanvas.drawText(
+                                "${day.monthValue}/${day.dayOfMonth}",
+                                x,
+                                botY + with(density){12.dp.toPx()},
+                                textPaint
+                            )
+                        }
+
+                        selection?.let { sel ->
+                            val i = sel.index
+                            val isA = sel.series == 0
+                            val value = if (isA) a[i] else b[i]
+                            var color = if (isA) lineAColor else lineBColor
+                            val cx = xFor(i)
+                            val cy = yFor(value)
+                            val seriesLabel = if (isA) "摄入" else "消耗"
+                            val text = "$seriesLabel ${value} kcal"
+
+                            // 文本测量
+                            val bubbleTextPaint = android.graphics.Paint().apply {
+                                color = Color.Black                      // ✅ 黑字
+                                textSize = with(density) { bubbleTextSizeSp.toPx() }
+                                isAntiAlias = true
+                            }
+                            val textWidth = bubbleTextPaint.measureText(text)
+                            val fm = bubbleTextPaint.fontMetrics
+                            val textHeight = fm.bottom - fm.top
+
+                            val bubbleW = textWidth + bubblePaddingPx * 2
+                            val bubbleH = textHeight + bubblePaddingPx * 2
+
+                            // 默认放在点的上方，越界则放下方
+                            val gap = 6.dp.toPx()
+                            var left = (cx - bubbleW / 2f).coerceIn(0f, size.width - bubbleW)
+                            var top  = (cy - gap - bubbleH)      // 上方
+                            val placeAbove = top >= 0f
+                            if (!placeAbove) {
+                                top = (cy + gap).coerceIn(0f, size.height - bubbleH)
+                            }
+
+                            // —— 阴影（简易）：下方 2dp 的半透明圆角矩形 —— //
+                            val shadowOffsetY = 2.dp.toPx()
+                            drawRoundRect(
+                                color = Color.Black.copy(alpha = 0.12f),
+                                topLeft = Offset(left, top + shadowOffsetY),
+                                size = Size(bubbleW, bubbleH),
+                                cornerRadius = CornerRadius(bubbleCornerPx, bubbleCornerPx)
+                            )
+
+                            // —— 白底主框 —— //
+                            drawRoundRect(
+                                color = Color.White,                               // ✅ 白底
+                                topLeft = Offset(left, top),
+                                size = Size(bubbleW, bubbleH),
+                                cornerRadius = CornerRadius(bubbleCornerPx, bubbleCornerPx)
+                            )
+
+                            // —— 细描边（低饱和） —— //
+                            drawRoundRect(
+                                color = cs.outline.copy(alpha = 0.25f),
+                                topLeft = Offset(left, top),
+                                size = Size(bubbleW, bubbleH),
+                                cornerRadius = CornerRadius(bubbleCornerPx, bubbleCornerPx),
+                                style = Stroke(width = 1.dp.toPx())
+                            )
+
+                            // —— 文本 —— //
+                            val tx = left + bubblePaddingPx
+                            val ty = top + bubblePaddingPx - fm.top
+                            drawContext.canvas.nativeCanvas.drawText(text, tx, ty, bubbleTextPaint)
+                        }
                     }
                 }
             }
         }
     }
 }
+
 
 @Composable
 private fun DeficitBarChart(
@@ -1116,7 +1280,7 @@ private fun DeficitBarChart(
     // 只让右侧主画布滚动；首帧在最右
     val hScroll = rememberScrollState(Int.MAX_VALUE)
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         val viewportPx = with(density) {
             (maxWidth - yAxisWidth
                     - outerPadPlot.calculateStartPadding(layoutDir)
@@ -1258,7 +1422,57 @@ private fun DeficitBarChart(
     }
 }
 
+// 通过所有点，且在每段 [Pi, Pi+1] 内不越过两端 y 值范围
+private fun buildMonotonePath(points: List<Offset>): Path {
+    val n = points.size
+    val path = Path()
+    if (n == 0) return path
+    path.moveTo(points[0].x, points[0].y)
+    if (n == 1) return path
 
+    val x = FloatArray(n) { points[it].x }
+    val y = FloatArray(n) { points[it].y }
+
+    // 斜率（割线）与端点切线
+    val d = FloatArray(n - 1)
+    for (i in 0 until n - 1) {
+        val dx = x[i + 1] - x[i]
+        d[i] = if (dx != 0f) (y[i + 1] - y[i]) / dx else 0f
+    }
+    val m = FloatArray(n)
+    m[0] = d[0]
+    for (i in 1 until n - 1) {
+        m[i] = if (d[i - 1] * d[i] <= 0f) 0f else (d[i - 1] + d[i]) / 2f
+    }
+    m[n - 1] = d[n - 2]
+
+    // Fritsch–Carlson 限制，防止过冲
+    for (i in 0 until n - 1) {
+        if (d[i] == 0f) {
+            m[i] = 0f; m[i + 1] = 0f
+        } else {
+            val a = m[i] / d[i]
+            val b = m[i + 1] / d[i]
+            val s = a * a + b * b
+            if (s > 9f) {
+                val t = 3f / sqrt(s)
+                m[i] = t * a * d[i]
+                m[i + 1] = t * b * d[i]
+            }
+        }
+    }
+
+    // Hermite → Cubic Bézier
+    for (i in 0 until n - 1) {
+        val h = x[i + 1] - x[i]
+        val c1x = x[i] + h / 3f
+        val c1y = y[i] + m[i] * h / 3f
+        val c2x = x[i + 1] - h / 3f
+        val c2y = y[i + 1] - m[i + 1] * h / 3f
+        path.cubicTo(c1x, c1y, c2x, c2y, x[i + 1], y[i + 1])
+    }
+    return path
+}
 
 
 

@@ -172,7 +172,7 @@ private fun GoalEditCard(current: Int, enabled: Boolean, onSave: (Int) -> Unit) 
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color.White,                   // ⬅️ 纯白背景
+            containerColor = Color.White.copy(alpha = 0.85f),                   // ⬅️ 纯白背景
             contentColor = MaterialTheme.colorScheme.onSurface
         )
     ) {

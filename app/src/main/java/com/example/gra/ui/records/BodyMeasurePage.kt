@@ -15,9 +15,11 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material3.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -41,6 +43,7 @@ import com.example.gra.ui.viewmodel.BODY_DISPLAY_ORDER
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 data class MeasureItemUi(
     val id: String,          // 没有真实 id 时，用 "typeKey-YYYY-MM-DD"
@@ -131,6 +134,7 @@ fun BodyMeasurePage(
                 .padding(inner)
                 .padding(16.dp)
         ) {
+            Spacer(Modifier.height(16.dp))
             // 1) 六个卡片，3列网格
             for (row in BODY_DISPLAY_ORDER.chunked(3)) {
                 Row(
@@ -150,30 +154,50 @@ fun BodyMeasurePage(
                 Spacer(Modifier.height(12.dp))
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(16.dp))
 
             // 2) Tab 切换不同维度的曲线
             val selectedIndex = BODY_DISPLAY_ORDER.indexOf(selected).coerceAtLeast(0)
 
-            ScrollableTabRow(
-                selectedTabIndex = selectedIndex,
-                edgePadding = 0.dp
+            val shape = RoundedCornerShape(8.dp)
+
+            Surface(
+                shape = shape,
+                color = Color.White,
+                tonalElevation = 0.dp,
+                modifier = Modifier.clip(shape) // 保证子内容遵循圆角
             ) {
-                BODY_DISPLAY_ORDER.forEach { t ->
-                    Tab(
-                        selected = selected == t,
-                        onClick = { vm.select(t) },
-                        text = { Text(t.label) }
-                    )
+                ScrollableTabRow(
+                    selectedTabIndex = selectedIndex,
+                    edgePadding = 0.dp,
+                    containerColor = Color.Transparent,   // 让外层白底生效（或 Color.White）
+                    divider = {},                         // 去掉灰色底线
+                    indicator = { tabPositions ->         // 可保留默认；这里演示细一点的指示器（可选）
+                        TabRowDefaults.Indicator(
+                            modifier = Modifier.tabIndicatorOffset(tabPositions[selectedIndex]),
+                            height = 2.dp
+                        )
+                    }
+                ) {
+                    BODY_DISPLAY_ORDER.forEach { t ->
+                        Tab(
+                            selected = selected == t,
+                            onClick = { vm.select(t) },
+                            text = { Text(t.label) }
+                        )
+                    }
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
+            //3.折线图
+            Spacer(Modifier.height(12.dp))
 
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                tonalElevation = 1.dp,
-                modifier = Modifier.fillMaxWidth().height(240.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(240.dp)
+                    .clip(RoundedCornerShape(16.dp))                  // 让背景有圆角
+                    .background(Color.White.copy(alpha = 0.7f))       // 半透明背景
             ) {
                 PrettyLineChart(
                     points = history.map { it.value },
@@ -240,6 +264,7 @@ private fun MeasureCard(
     Surface(
         shape = RoundedCornerShape(18.dp),
         tonalElevation = 2.dp,
+        color = Color.White.copy(alpha = 0.7f),
         modifier = modifier.height(110.dp)
     ) {
         Box(Modifier.fillMaxSize().padding(14.dp)) {
@@ -408,27 +433,34 @@ private fun PrettyLineChart(
             )
         }
 
-        // ====== 面积 + 折线 ======
+        // ==== 生成平滑路径（通过所有采样点） ====
+        val pts = points.indices.map { i -> Offset(posX(i), posY(points[i])) }
+
+// 折线路径（平滑）
+        val linePath = buildMonotonePath(pts)
+
+// 面积路径（在折线基础上往下闭合）
+        val areaPath = Path().apply {
+            addPath(linePath)
+            lineTo(posX(points.lastIndex), topPad + chartH)
+            lineTo(posX(0),               topPad + chartH)
+            close()
+        }
+
+// ==== 先绘制面积，再绘制线 ====
         val lineColor = color
         val areaColor = color.copy(alpha = 0.15f)
-        val path = Path()
-        points.indices.forEach { i ->
-            val x = posX(i)
-            val y = posY(points[i])
-            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-        }
-        // 面积闭合
-        path.lineTo(posX(points.lastIndex), topPad + chartH)
-        path.lineTo(posX(0), topPad + chartH)
-        path.close()
-        drawPath(path, areaColor)
-        // 折线
-        var prev: Offset? = null
-        points.indices.forEach { i ->
-            val p = Offset(posX(i), posY(points[i]))
-            prev?.let { drawLine(lineColor, it, p, strokeWidth = 3f) }
-            prev = p
-        }
+        drawPath(areaPath, areaColor)
+
+        drawPath(
+            path = linePath,
+            color = lineColor,
+            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                width = 3f,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                join = androidx.compose.ui.graphics.StrokeJoin.Round
+            )
+        )
 
         // ====== 中空圆点 + 数值标签 ======
         val dotStroke = 3f
@@ -556,3 +588,54 @@ private fun EditMeasureSheet(
     }
 }
 
+// 通过所有点，且在每段 [Pi, Pi+1] 内不越过两端 y 值范围（Fritsch–Carlson）
+private fun buildMonotonePath(points: List<Offset>): Path {
+    val n = points.size
+    val path = Path()
+    if (n == 0) return path
+    path.moveTo(points[0].x, points[0].y)
+    if (n == 1) return path
+
+    val x = FloatArray(n) { points[it].x }
+    val y = FloatArray(n) { points[it].y }
+    val d = FloatArray(n - 1) // 割线斜率
+
+    for (i in 0 until n - 1) {
+        val dx = x[i + 1] - x[i]
+        d[i] = if (dx != 0f) (y[i + 1] - y[i]) / dx else 0f
+    }
+
+    val m = FloatArray(n) // 端点切线
+    m[0] = d[0]
+    for (i in 1 until n - 1) {
+        m[i] = if (d[i - 1] * d[i] <= 0f) 0f else (d[i - 1] + d[i]) / 2f
+    }
+    m[n - 1] = d[n - 2]
+
+    // Fritsch–Carlson 限制，防止过冲
+    for (i in 0 until n - 1) {
+        if (d[i] == 0f) {
+            m[i] = 0f; m[i + 1] = 0f
+        } else {
+            val a = m[i] / d[i]
+            val b = m[i + 1] / d[i]
+            val s = a * a + b * b
+            if (s > 9f) {
+                val t = 3f / sqrt(s)
+                m[i] = t * a * d[i]
+                m[i + 1] = t * b * d[i]
+            }
+        }
+    }
+
+    // Hermite → Cubic Bézier
+    for (i in 0 until n - 1) {
+        val h = x[i + 1] - x[i]
+        val c1x = x[i] + h / 3f
+        val c1y = y[i] + m[i] * h / 3f
+        val c2x = x[i + 1] - h / 3f
+        val c2y = y[i + 1] - m[i + 1] * h / 3f
+        path.cubicTo(c1x, c1y, c2x, c2y, x[i + 1], y[i + 1])
+    }
+    return path
+}

@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Star
@@ -385,12 +386,11 @@ fun ExerciseTopBar(
         datePicker.show()
     }
 
-    TopAppBar(
+    CenterAlignedTopAppBar(
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = selectedDate.format(DateTimeFormatter.ofPattern("M月d日")),
-                    modifier = Modifier.clickable { openDatePicker = true }
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(text = "运动")
@@ -401,6 +401,14 @@ fun ExerciseTopBar(
                 Icon(Icons.Default.KeyboardArrowLeft, contentDescription = "返回")
             }
         },
+        actions = {
+            IconButton(onClick = { openDatePicker = true }) {
+                Icon(
+                    imageVector = Icons.Default.DateRange,
+                    contentDescription = "选择日期"
+                )
+            }
+        }
     )
 }
 

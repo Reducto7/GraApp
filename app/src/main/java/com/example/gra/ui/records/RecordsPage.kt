@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -197,18 +198,15 @@ private fun SummaryCard(
     onClick: () -> Unit
 ) {
     val intakeProgress by animateFloatAsState(
-        targetValue = (intakeKcal / recommendedIntake.toFloat()).coerceIn(0f, 1f),
+        targetValue = (intakeKcal / recommendedIntake.toFloat()),
         animationSpec = tween(900)
     )
     val burnProgress by animateFloatAsState(
-        targetValue = (burnKcal / recommendedBurn.toFloat()).coerceIn(0f, 1f),
+        targetValue = (burnKcal / recommendedBurn.toFloat()),
         animationSpec = tween(900)
     )
 
     val base = MaterialTheme.colorScheme.tertiary
-    val intakeColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.35f + 0.65f * intakeProgress)
-    val burnColor   = MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f + 0.65f * burnProgress)
-
     ElevatedCard(
         onClick = onClick, // ← ripple 铺满整个卡片
         modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp),
@@ -239,13 +237,12 @@ private fun SummaryCard(
             // 右侧双环（同色同粗，颜色随进度加深）
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 Box(Modifier.size(132.dp)) {
-                    DualRingProgress(
+                    DualGradientRingProgress(
                         intakeProgress = intakeProgress,
                         burnProgress   = burnProgress,
-                        ringColor = base,
+                        intakeBaseColor = MaterialTheme.colorScheme.tertiary,  // 饮食主色
+                        burnBaseColor   = MaterialTheme.colorScheme.secondary, // 运动主色
                         trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
-                        overrideIntakeColor = intakeColor,
-                        overrideBurnColor   = burnColor,
                         startAngle = -90f,
                         counterClockwise = true,
                         stroke = 14.dp,
@@ -258,55 +255,127 @@ private fun SummaryCard(
 }
 
 @Composable
-private fun DualRingProgress(
+private fun DualGradientRingProgress(
     intakeProgress: Float,
     burnProgress: Float,
-    ringColor: Color,
+    intakeBaseColor: Color,
+    burnBaseColor: Color,
     trackColor: Color,
     startAngle: Float = -90f,
     counterClockwise: Boolean = true,
     stroke: Dp = 14.dp,
-    gapBetweenRings: Dp = 12.dp,
-    // 自定义颜色（用于“进度越高越深”）
-    overrideIntakeColor: Color? = null,
-    overrideBurnColor: Color?   = null
+    gapBetweenRings: Dp = 12.dp
 ) {
-    val sweepIntake = (if (counterClockwise) -360f else 360f) * intakeProgress
-    val sweepBurn   = (if (counterClockwise) -360f else 360f) * burnProgress
+    // 进度可在外部做 clamp；这里保持与你单环一致的行为（允许 >1 做溢出）
+    val dir = if (counterClockwise) -1f else 1f
 
     Canvas(modifier = Modifier.fillMaxSize()) {
-        val s = with(density) { stroke.toPx() }
-        val gap = with(density) { gapBetweenRings.toPx() }
+        val s   = stroke.toPx()
+        val gap = gapBetweenRings.toPx()
 
         val radiusOuter = (size.minDimension - s) / 2f
         val radiusInner = radiusOuter - s - gap
 
-        // 轨道
-        drawCircle(trackColor, radiusOuter, center, style = Stroke(s, cap = StrokeCap.Round))
-        drawCircle(trackColor, radiusInner, center, style = Stroke(s, cap = StrokeCap.Round))
+        val rectOuter = androidx.compose.ui.geometry.Rect(
+            center.x - radiusOuter, center.y - radiusOuter,
+            center.x + radiusOuter, center.y + radiusOuter
+        )
+        val rectInner = androidx.compose.ui.geometry.Rect(
+            center.x - radiusInner, center.y - radiusInner,
+            center.x + radiusInner, center.y + radiusInner
+        )
 
-        // 外环（饮食）
-        drawArc(
-            color = overrideIntakeColor ?: ringColor,
-            startAngle = startAngle,
-            sweepAngle = sweepIntake,
-            useCenter = false,
-            topLeft = Offset(center.x - radiusOuter, center.y - radiusOuter),
-            size = Size(radiusOuter * 2, radiusOuter * 2),
+        // —— 轨道永远先画（即使进度为 0） —— //
+        drawCircle(
+            color = trackColor,
+            radius = radiusOuter,
+            center = center,
             style = Stroke(width = s, cap = StrokeCap.Round)
         )
-        // 内环（运动）
-        drawArc(
-            color = overrideBurnColor ?: ringColor,
-            startAngle = startAngle,
-            sweepAngle = sweepBurn,
-            useCenter = false,
-            topLeft = Offset(center.x - radiusInner, center.y - radiusInner),
-            size = Size(radiusInner * 2, radiusInner * 2),
+        drawCircle(
+            color = trackColor,
+            radius = radiusInner,
+            center = center,
             style = Stroke(width = s, cap = StrokeCap.Round)
         )
+
+        // 内部工具：画“首圈渐变 + 溢出覆盖”
+        fun drawRing(
+            progress: Float,
+            baseColor: Color,
+            rect: androidx.compose.ui.geometry.Rect
+        ) {
+            if (progress <= 0f) return  // 只跳过进度绘制，轨道已画
+
+            val totalSweep = 360f * progress
+            val epsilon    = 0.001f
+            val sweep1     = minOf(totalSweep, 360f - epsilon)
+            val extra      = (totalSweep - 360f).coerceAtLeast(0f)
+
+            // 起/终颜色策略：起点不透明，终点半透明
+            val startC = baseColor
+            val endC   = baseColor.copy(alpha = 0.35f)
+
+            // 旋转到正确起笔角后，统一用“正角度”构造路径
+            val pivotGrad  = if (dir < 0f) startAngle - sweep1 else startAngle
+            val pivotExtra = if (dir < 0f) startAngle - extra  else startAngle
+
+            // 渐变 stops：把第一段弧长映射到 [0..1]，之后保持终点色
+            val t = (sweep1 / 360f).coerceIn(0.001f, 1f)
+            val brush = Brush.sweepGradient(
+                colorStops = arrayOf(
+                    0f to startC,
+                    t  to endC,
+                    1f to startC
+                ),
+                center = center
+            )
+
+            // —— 第一圈（或不足一圈）：渐变 —— //
+            if (sweep1 > 0f) {
+                withTransform({ rotate(pivotGrad, pivot = center) }) {
+                    val path = Path().apply {
+                        arcTo(
+                            rect = rect,
+                            startAngleDegrees = 0f,
+                            sweepAngleDegrees = sweep1, // < 360
+                            forceMoveTo = true
+                        )
+                    }
+                    drawPath(
+                        path = path,
+                        brush = brush,
+                        style = Stroke(width = s, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    )
+                }
+            }
+
+            // —— 溢出（> 1 圈）：用起点色覆盖起笔处 —— //
+            if (extra > 0f) {
+                withTransform({ rotate(pivotExtra, pivot = center) }) {
+                    val path = Path().apply {
+                        arcTo(
+                            rect = rect,
+                            startAngleDegrees = 0f,
+                            sweepAngleDegrees = extra,
+                            forceMoveTo = true
+                        )
+                    }
+                    drawPath(
+                        path = path,
+                        color = startC,
+                        style = Stroke(width = s, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    )
+                }
+            }
+        }
+
+        // 先画外环（饮食），再画内环（运动）
+        drawRing(progress = intakeProgress, baseColor = intakeBaseColor, rect = rectOuter)
+        drawRing(progress = burnProgress,   baseColor = burnBaseColor,   rect = rectInner)
     }
 }
+
 
 enum class IndicatorStyle { Bar, Dot }
 

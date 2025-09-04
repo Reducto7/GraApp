@@ -36,6 +36,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material3.MaterialTheme.colorScheme
 import androidx.compose.ui.draw.clip
@@ -102,8 +103,8 @@ fun FoodPage(
     val totalFoodKcal = selectedFoods.sumOf { it.kcal }
 
 // 👇 页面一进来就自动获取今天的第几餐
-    LaunchedEffect(Unit) {
-        viewModel.getTodayMealIndex(userId, today) {
+    LaunchedEffect(selectedDate) {
+        viewModel.getTodayMealIndex(userId, selectedDate.toString()) {
             mealIndex = it
         }
     }
@@ -527,14 +528,13 @@ fun FoodRecordTopBar(
         datePicker.show()
     }
 
-    TopAppBar(
+    CenterAlignedTopAppBar(
         title = {
             Row(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${selectedDate.format(DateTimeFormatter.ofPattern("M月d日"))}",
-                    modifier = Modifier.clickable { openDatePicker = true }
+                    text = selectedDate.format(DateTimeFormatter.ofPattern("M月d日"))
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(text = "第${mealIndex}餐")
@@ -543,6 +543,14 @@ fun FoodRecordTopBar(
         navigationIcon = {
             IconButton(onClick = { navController.popBackStack() }) {
                 Icon(Icons.Default.KeyboardArrowLeft, contentDescription = "返回")
+            }
+        },
+        actions = {
+            IconButton(onClick = { openDatePicker = true }) {
+                Icon(
+                    imageVector = Icons.Default.DateRange,
+                    contentDescription = "选择日期"
+                )
             }
         }
     )

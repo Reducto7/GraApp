@@ -45,7 +45,7 @@ class BodyMeasureViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = BodyMeasureRepository.create(app)
 
     // 当前图表选择的维度
-    private val _selectedType = MutableStateFlow(BodyType.WAIST)
+    private val _selectedType = MutableStateFlow(BODY_DISPLAY_ORDER.first())
     val selectedType: StateFlow<BodyType> = _selectedType
 
     fun select(type: BodyType) { _selectedType.value = type }
