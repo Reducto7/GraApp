@@ -1393,8 +1393,8 @@ private fun DeficitBarChart(
                         drawPath(path = path, color = barColor)
 
                         // 数值标签：正值在柱顶上方；负值在柱底下方
-                        val labelY = if (v > 0) (top - labelGap)
-                        else (bottom + labelGap + textPaint.textSize * 0.15f)
+                        val labelY = if (v > 0) (top - labelGap + 2.dp.toPx())
+                        else (bottom + labelGap + textPaint.textSize * 0.15f + 2.dp.toPx())
                         drawContext.canvas.nativeCanvas.drawText(
                             v.toString(), x + barW / 2f, labelY, textPaint
                         )

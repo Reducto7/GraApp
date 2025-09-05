@@ -20,7 +20,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
-import com.example.gra.ui.BottomNavigationBar
 import com.example.gra.ui.bottomGreen
 import com.example.gra.ui.data.Remote
 import com.example.gra.ui.topBlue

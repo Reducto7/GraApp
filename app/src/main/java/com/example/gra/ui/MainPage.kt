@@ -1,5 +1,6 @@
 package com.example.gra.ui
 
+import android.os.Build
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -93,6 +94,8 @@ import kotlin.math.ceil
 import kotlin.math.floor
 // 原有的你可能已经有，这里一并列出，重复的没关系，IDE 会自动去掉
 import android.widget.Toast
+import androidx.annotation.RequiresApi
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -100,27 +103,36 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.window.Dialog
 import com.example.gra.ui.data.Remote
 import com.example.gra.ui.viewmodel.FriendsViewModel
-
+import com.example.gra.ui.viewmodel.TasksViewModel
+import java.time.LocalDate
 
 
 data class Segment(val fromSec: Float, val toSec: Float)
@@ -170,6 +182,7 @@ data class ActiveLeaf(
 val topBlue = Color(0xFFBFDFFF)    // 浅蓝，带点天蓝色
 val bottomGreen = Color(0xFFCCF2D1) // 浅绿，柔和青草色
 
+@RequiresApi(Build.VERSION_CODES.Q)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainPage(navController: NavHostController, initialShow: String? = null)
@@ -195,6 +208,12 @@ fun MainPage(navController: NavHostController, initialShow: String? = null)
     // ✅ 不要用 remember 固化 uid；直接取当前用户（或用 rememberUpdatedState 也可）
     val uid = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
 
+     // ✅ 在页面可见时启动一次监听
+     LaunchedEffect(uid) {
+         if (uid.isNotBlank()) {
+             growVm.start(uid)
+         }
+     }
     // ✅ 新增：是否正在播放雨
     // 运行时“雨实例池”
     val rains = remember { mutableStateListOf<Int>() }
@@ -205,10 +224,26 @@ fun MainPage(navController: NavHostController, initialShow: String? = null)
     // ✅ 监听播放状态（用于禁用按钮）
     val playing by stageVm.playingFlow.collectAsState()
 
-    // ✅ 在页面可见时启动一次监听
-    LaunchedEffect(uid) {
-        if (uid.isNotBlank()) growVm.start(uid)
-    }
+     //监听好友里的待处理
+     val friendsVm: FriendsViewModel = viewModel()
+     LaunchedEffect(uid) { if (uid.isNotBlank()) friendsVm.start(uid) }
+     val requests by friendsVm.requests.collectAsState()
+     val hasPending = requests.isNotEmpty()
+
+     // 在你已有的 friendsVm 相关代码附近，增加这段
+     val tasksVm: TasksViewModel = viewModel()
+     val today = remember { LocalDate.now().toString() }
+     LaunchedEffect(uid, today) {
+         if (uid.isNotBlank()) {
+             tasksVm.start(uid, today)
+             // （可选）顺手把“登录一次”标记为完成，便于首次进入就能出现可领取
+             tasksVm.markLoginDone(uid, today)
+         }
+     }
+     val tasks by tasksVm.tasks.collectAsState()
+     val hasTaskClaimable = remember(tasks) { tasks.any { it.completed && !it.claimed } }
+
+
 
     Box(Modifier.fillMaxSize()) {
         // 底层：天空渐变
@@ -250,14 +285,17 @@ fun MainPage(navController: NavHostController, initialShow: String? = null)
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
 
+
                 //按钮
                 YourHomeSection(
                     growVm = growVm,
                     stageVm = stageVm,
                     uid = uid,
                     navController = navController,
-                    onOpenFriends = { showFriends = true },  // 顶层开关
-                    onOpenGroups  = { showGroups  = true }   // 顶层开关
+                    onOpenFriends = { showFriends = true },
+                    onOpenGroups  = { showGroups  = true },
+                    friendHasPending = hasPending,
+                    taskHasClaimable = hasTaskClaimable   // 👈 新增这一行
                 )
 
                 //树木
@@ -297,9 +335,10 @@ fun MainPage(navController: NavHostController, initialShow: String? = null)
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // 成长（测试用）
-            Button(
+            HollowButton(
+                text = "成长",
                 onClick = {
-                    if (uid.isBlank()) return@Button
+                    if (uid.isBlank()) return@HollowButton
                     val start = stageVm.stageIndex
                     // 与原 GrowthControls 一致：先强制升级，再从当前段播放到下一段
                     growVm.forceLevelUp(uid) {
@@ -307,17 +346,18 @@ fun MainPage(navController: NavHostController, initialShow: String? = null)
                         stageVm.playFrom(start)
                     }
                 },
-                enabled = !playing && stageVm.stageIndex < TREE_SEGMENTS.lastIndex
-            ) { Text("成长") }
+                modifier = Modifier
+            )
 
             // 重置
-            Button(
+            HollowButton(
+                text = "重置",
                 onClick = {
                     stageVm.reset()
                     if (uid.isNotBlank()) growVm.resetLevel0(uid)
                 },
-                enabled = !playing
-            ) { Text("重置") }
+                modifier = Modifier
+            )
         }
 
         // 右下角：浇水大圆按钮
@@ -394,68 +434,109 @@ private fun TreeStageController(
 }
 
 
+@RequiresApi(Build.VERSION_CODES.Q)
 @Composable
 fun YourHomeSection(
     growVm: GrowthViewModel,
     stageVm: GrowthViewModel.TreeStageViewModel,
     uid: String,
     navController: NavHostController,
-    onOpenFriends: () -> Unit,   // ← 新增
-    onOpenGroups: () -> Unit     // ← 新增
-) {
+    onOpenFriends: () -> Unit,
+    onOpenGroups: () -> Unit,
+    friendHasPending: Boolean,
+    taskHasClaimable: Boolean
+)
+ {
     val tree by growVm.tree.collectAsState()
 
-    TreeSection(
-        state = tree,
-        onFeed = {
-            if (uid.isBlank()) return@TreeSection
-            // 先把 pending → fed（你的 feedAll 已经不升级，仅加 fed）
-            growVm.feedAll(uid) { r ->
-                // 如果这次换算后 fed 达标，立即“先升级，再播放”
-                if (r.newFed >= 1000 && !stageVm.playing) {
-                    val start = stageVm.stageIndex
-                    // 先升级（扣 1000，level+1）：这样避免重复触发与回跳
-                    growVm.upgrade(uid) {
-                        // 升级提交后立刻播放 start -> start+1（播放中不被回流覆盖）
-                        stageVm.playFrom(start)
-                    }
-                }
-            }
-        }
-    )
-    // ▶ 在 TreeSection “下方”加一个容器，把菜单贴到右上
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp) // 与整体左右留白一致
-    ) {
-        //右上角按钮
-        VerticalActionMenu(
-            navController = navController,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-        )
-        // 左上角：新增“好友 / 群组”
-        Column(
-            modifier = Modifier.align(Alignment.TopStart),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            CircleIconWithText(
-                label = "好友",
-                icon = Icons.Default.ThumbUp,
-                onClick = { onOpenFriends() }
-            )
-            CircleIconWithText(
-                label = "群组",
-                icon = Icons.Default.Home,
-                onClick = { onOpenGroups() }
-            )
 
-        }
-    }
+     Box(Modifier.fillMaxWidth()) {
+
+         // —— 底层：内容（进度条 + LV） —— //
+         Column(
+             modifier = Modifier
+                 .fillMaxWidth()
+                 .padding(horizontal = 16.dp)
+         ) {
+             TreeSection(
+                 state = tree,
+                 onFeed = {
+                     if (uid.isBlank()) return@TreeSection
+                     // 先把 pending → fed（你的 feedAll 已经不升级，仅加 fed）
+                     growVm.feedAll(uid) { r ->
+                         // 如果这次换算后 fed 达标，立即“先升级，再播放”
+                         if (r.newFed >= 1000 && !stageVm.playing) {
+                             val start = stageVm.stageIndex
+                             // 先升级（扣 1000，level+1）：这样避免重复触发与回跳
+                             growVm.upgrade(uid) {
+                                 // 升级提交后立刻播放 start -> start+1（播放中不被回流覆盖）
+                                 stageVm.playFrom(start)
+                             }
+                         }
+                     }
+                 }
+             )
+         }
+
+         Column(
+             modifier = Modifier
+                 .align(Alignment.TopStart)
+                 .padding(horizontal = 16.dp),
+             verticalArrangement = Arrangement.spacedBy(14.dp),
+             horizontalAlignment = Alignment.CenterHorizontally
+         ) {
+             Spacer(Modifier.height(50.dp))
+             CircleIconWithText(
+                 label = "好友",
+                 icon = Icons.Default.Person,
+                 onClick = { onOpenFriends() },
+                 showBadge = friendHasPending,       // ✅ 有待处理时显示角标
+             )
+             CircleIconWithText(
+                 label = "群组",
+                 icon = Icons.Default.Home,
+                 onClick = { onOpenGroups() }
+             )
+         }
+
+         Column(
+             modifier = Modifier
+                 .align(Alignment.TopEnd)
+                 .padding(horizontal = 16.dp),
+             verticalArrangement = Arrangement.spacedBy(14.dp),
+             horizontalAlignment = Alignment.CenterHorizontally
+         ) {
+             Spacer(Modifier.height(50.dp))
+             CircleIconWithText(
+                 label = "记录",
+                 icon = Icons.Default.List,
+                 onClick = {
+                     navController.navigate("records") {
+                         popUpTo("records") { inclusive = true }
+                     }
+                 }
+             )
+             CircleIconWithText(
+                 label = "任务",
+                 icon = Icons.Default.CheckCircle,
+                 onClick = { navController.navigate("tasks") },
+                 showBadge = taskHasClaimable
+             )
+             CircleIconWithText(
+                 label = "设置",
+                 icon = Icons.Default.Settings,
+                 onClick = {
+                     navController.navigate("mine") {
+                         popUpTo("mine") { inclusive = true }
+                     }
+                 }
+             )
+         }
+     }
 }
 
+
+@RequiresApi(Build.VERSION_CODES.Q)
 @Composable
 fun TreeSection(
     state: com.example.gra.ui.data.Remote.TreeState,
@@ -466,43 +547,43 @@ fun TreeSection(
     val level = "Lv.${state.level}"
     val expText = "${state.fed}/1000"
 
+    // 进场动画：首次进入从 0f → progress，后续 progress 变化也会平滑过渡
+    var playAnim by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { playAnim = true }
+    val animatedProgress by animateFloatAsState(
+        targetValue = if (playAnim) progress else 0f,
+        animationSpec = tween(durationMillis = 900, easing = FastOutSlowInEasing),
+        label = "treeProgress"
+    )
+
+    val cs = MaterialTheme.typography
+
     Column(
         modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
-        /*
-        // 等级：大号 + 居中
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Text(
-                text = "Lv.${state.level}",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
-
-         */
-
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
+
             // 进度条容器：圆角 + 主题色包边 + 透明轨道
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .height(24.dp)
-                    .clip(RoundedCornerShape(15.dp))
+                    .height(36.dp)
+                    .clip(RoundedCornerShape(16.dp))
                     .border(
                         width = 1.5.dp,
                         color = MaterialTheme.colorScheme.primary,
-                        shape = RoundedCornerShape(15.dp)
+                        shape = RoundedCornerShape(16.dp)
                     )
+                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
             ) {
-                // 进度条本体（轨道透明）
+                // 进度条本体（轨道透明）——改为使用动画后的进度
                 LinearProgressIndicator(
-                    progress = progress,
+                    progress = animatedProgress,
                     modifier = Modifier.matchParentSize(),
                     trackColor = Color.Transparent,
                     color = MaterialTheme.colorScheme.primary
@@ -514,162 +595,126 @@ fun TreeSection(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "$level  ·  $expText",
+                        text = expText,
                         style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold,
                     )
                 }
 
                 // —— 居中文本：顶层“反色”，仅在进度范围内显示 —— //
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .drawWithContent {
-                            // 仅绘制左侧进度宽度的区域
-                            clipRect(
-                                left = 0f,
-                                top = 0f,
-                                right = size.width * progress,
-                                bottom = size.height
-                            ) {
-                                this@drawWithContent.drawContent()
+                val density = LocalDensity.current
+                Canvas(Modifier.matchParentSize()) {
+                    // 只在进度范围内生效
+                    clipRect(left = 0f, top = 0f, right = size.width * progress, bottom = size.height) {
+                        // 用原生 Paint 画文字并设为 CLEAR（镂空）
+                        drawIntoCanvas { canvas ->
+                            val paint = android.graphics.Paint().apply {
+                                isAntiAlias = true
+                                isSubpixelText = true
+                                textSize =
+                                    with(density) { cs.labelLarge.fontSize.toPx() }
+
+                                // ✅ 方式一：用粗体字形
+                                typeface = android.graphics.Typeface.create(
+                                    android.graphics.Typeface.DEFAULT,
+                                    android.graphics.Typeface.BOLD
+                                )
+                                // CLEAR 镂空
+                                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                                    blendMode = android.graphics.BlendMode.CLEAR
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    xfermode = android.graphics.PorterDuffXfermode(
+                                        android.graphics.PorterDuff.Mode.CLEAR
+                                    )
+                                }
                             }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "$level  ·  $expText",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color.White, // 或 MaterialTheme.colorScheme.onPrimary
-                        fontWeight = FontWeight.Bold
-                    )
+                            val text = expText
+                            val textWidth = paint.measureText(text)
+                            val fm = paint.fontMetrics
+                            val x = (size.width - textWidth) / 2f
+                            val y = size.height / 2f - (fm.ascent + fm.descent) / 2f
+                            canvas.nativeCanvas.drawText(text, x, y, paint)
+                        }
+                    }
                 }
             }
 
             Spacer(Modifier.width(12.dp))
 
-            Button(
+            HollowButton(
+                text = "+${state.pending}",
                 onClick = onFeed,
-                enabled = state.pending > 0
-            ) {
-                Text(text = "+${state.pending}")
-            }
+                modifier = Modifier
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Text(
+                text = level,
+                fontSize = 32.sp,
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
         }
     }
 }
 
-@Composable
-fun VerticalActionMenu(
-    navController: NavController,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        CircleIconWithText(
-            label = "记录",
-            icon = Icons.Default.List,
-            onClick = {
-                navController.navigate("records") {
-                    popUpTo("records") { inclusive = true }
-                }
-            }
-        )
 
-        CircleIconWithText(
-            label = "任务",
-            icon = Icons.Default.CheckCircle,
-            onClick = { navController.navigate("tasks") }
-        )
 
-        CircleIconWithText(
-            label = "我的",
-            icon = Icons.Default.Person,
-            onClick = {
-                navController.navigate("mine") {
-                    popUpTo("mine") { inclusive = true }
-                }
-            }
-        )
-    }
-}
 
 @Composable
 private fun CircleIconWithText(
     label: String,
     icon: ImageVector,
     onClick: () -> Unit,
-    size: Dp = 48.dp
+    size: Dp = 48.dp,
+    showBadge: Boolean = false,
 ) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .size(size)
-                .clip(CircleShape)
-                .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape) // ✅ 圆形包边
-                .clickable(onClick = onClick),
-            contentAlignment = Alignment.Center
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        val extra = 16.dp // ✅ 给角标留出的外层空间
+        Box( // ✅ 外层更大、不裁剪
+            modifier = Modifier.size(size + extra)
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = label,
-                tint = MaterialTheme.colorScheme.primary  // ✅ 用主题色突出
-            )
+            // ✅ 内层才是圆形按钮（只裁剪这里）
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(size)
+                    .clip(CircleShape)
+                    .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                    .clickable(onClick = onClick),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = label,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            // ✅ 角标叠在外层右上角，不会被裁切
+            if (showBadge) {
+                Icon(
+                    imageVector = Icons.Filled.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 1.dp, y = -1.dp)
+                        .size(26.dp)
+                )
+            }
         }
-        Spacer(Modifier.height(6.dp))
+
+       // Spacer(Modifier.height(6.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.primary
-        )
-    }
-}
-
-
-@Composable
-fun BottomNavigationBar(navController: NavController) {
-    NavigationBar {
-        NavigationBarItem(
-            icon = { Icon(Icons.Default.Home, contentDescription = "养成") },
-            label = { Text("养成") },
-            selected = false,
-            onClick = {
-                navController.navigate("main") {
-                    popUpTo("main") { inclusive = true }
-                }
-            }
-        )
-        NavigationBarItem(
-            icon = { Icon(Icons.Default.List, contentDescription = "记录") },
-            label = { Text("记录") },
-            selected = false,
-            onClick = {
-                navController.navigate("records") {
-                    popUpTo("records") { inclusive = true }
-                }
-            }
-        )
-        NavigationBarItem(
-            icon = { Icon(Icons.Default.CheckCircle, contentDescription = "任务") },
-            label = { Text("任务") },
-            selected = false,
-            onClick = {
-                navController.navigate("tasks")
-            }
-        )
-        NavigationBarItem(
-            icon = { Icon(Icons.Default.Person, contentDescription = "我的") },
-            label = { Text("我的") },
-            selected = false,
-            onClick = {
-                navController.navigate("mine") {
-                    popUpTo("mine") { inclusive = true }
-                }
-            }
         )
     }
 }
@@ -1048,7 +1093,7 @@ fun FriendsDialog(
 ) {
     val ctx = LocalContext.current
     val uid = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
-    val vm: com.example.gra.ui.viewmodel.FriendsViewModel = viewModel()
+    val vm: FriendsViewModel = viewModel()
     LaunchedEffect(uid) { vm.start(uid) }
 
     var tab by remember { mutableStateOf(0) }
@@ -1060,28 +1105,56 @@ fun FriendsDialog(
     val busy by vm.busy.collectAsState()
     val deleteMode by vm.deleteMode.collectAsState()
 
+    // ✅ 改动 1：把 requests 提前收集，供 Tab 角标使用
+    val requests by vm.requests.collectAsState()
+    val hasPending = requests.isNotEmpty()
+
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(20.dp),
-            tonalElevation = 8.dp,
+            //tonalElevation = 8.dp,
             modifier = Modifier
                 .fillMaxWidth(1.0f)   // ✅ 更大
-                .fillMaxHeight(0.80f)  // ✅ 更高
+                .fillMaxHeight(0.7f)  // ✅ 更高
+                //.background(color = Color.Transparent)
         ) {
             // 用 Box 方便放“悬浮”按钮
-            Box(Modifier.fillMaxSize()) {
-
+            Box(
+                Modifier.fillMaxSize()
+                    //.background(color = Color.White.copy(alpha = 0.5f))
+            ) {
                 // 主内容：标题 + Tabs + 列表/输入
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(16.dp)
+                        .padding(vertical = 8.dp, horizontal = 16.dp)
                 ) {
                     Spacer(Modifier.height(10.dp))
                     TabRow(selectedTabIndex = tab) {
-                        Tab(text = { Text("已添加") }, selected = tab==0, onClick = { tab = 0 })
-                        Tab(text = { Text("待处理") }, selected = tab==1, onClick = { tab = 1 })
-                        Tab(text = { Text("添加") }, selected = tab==2, onClick = { tab = 2 })
+                        Tab(text = { Text("已添加") }, selected = tab == 0, onClick = { tab = 0 })
+
+                        Tab(
+                            selected = tab == 1,
+                            onClick = { tab = 1 },
+                            text = {
+                                Box {
+                                    Text("待处理")
+
+                                    if (hasPending) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Info,   // 也可以用 Icons.Rounded.Circle
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier
+                                                .size(20.dp)                       // 控制小圆点大小
+                                                .align(Alignment.TopEnd)          // 定位在右上角
+                                                .offset(x = 20.dp, y = (-8).dp)    // 微调位置
+                                        )
+                                    }
+                                }
+                            }
+                        )
+                        Tab(text = { Text("添加") }, selected = tab == 2, onClick = { tab = 2 })
                     }
                     Spacer(Modifier.height(10.dp))
 
@@ -1108,14 +1181,17 @@ fun FriendsDialog(
                                         val canGift = remember(f.lastGiftToFriend) {
                                             val ts = f.lastGiftToFriend?.toDate()
                                             if (ts == null) true else {
-                                                val cal = java.util.Calendar.getInstance().apply { time = ts }
-                                                val giftedKey = cal.get(java.util.Calendar.YEAR) * 10000 +
-                                                        (cal.get(java.util.Calendar.MONTH) + 1) * 100 +
-                                                        cal.get(java.util.Calendar.DAY_OF_MONTH)
+                                                val cal = java.util.Calendar.getInstance()
+                                                    .apply { time = ts }
+                                                val giftedKey =
+                                                    cal.get(java.util.Calendar.YEAR) * 10000 +
+                                                            (cal.get(java.util.Calendar.MONTH) + 1) * 100 +
+                                                            cal.get(java.util.Calendar.DAY_OF_MONTH)
                                                 val now = java.util.Calendar.getInstance()
-                                                val todayKey = now.get(java.util.Calendar.YEAR) * 10000 +
-                                                        (now.get(java.util.Calendar.MONTH) + 1) * 100 +
-                                                        now.get(java.util.Calendar.DAY_OF_MONTH)
+                                                val todayKey =
+                                                    now.get(java.util.Calendar.YEAR) * 10000 +
+                                                            (now.get(java.util.Calendar.MONTH) + 1) * 100 +
+                                                            now.get(java.util.Calendar.DAY_OF_MONTH)
                                                 giftedKey != todayKey
                                             }
                                         }
@@ -1128,13 +1204,31 @@ fun FriendsDialog(
                                             canGiftToday = canGift,
                                             deleteMode = deleteMode,
                                             onGift = {
-                                                vm.gift(uid, f.uid) { Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show() }
+                                                vm.gift(uid, f.uid) {
+                                                    Toast.makeText(
+                                                        ctx,
+                                                        it,
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }
                                             },
                                             onClaim = {
-                                                vm.claim(uid, f.uid) { Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show() }
+                                                vm.claim(uid, f.uid) {
+                                                    Toast.makeText(
+                                                        ctx,
+                                                        it,
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }
                                             },
                                             onDelete = {
-                                                vm.remove(uid, f.uid) { Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show() }
+                                                vm.remove(uid, f.uid) {
+                                                    Toast.makeText(
+                                                        ctx,
+                                                        it,
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }
                                             }
                                         )
                                         Divider()
@@ -1150,7 +1244,7 @@ fun FriendsDialog(
                                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                     Text("没有新的申请")
                                 }
-                            }else {
+                            } else {
                                 LazyColumn(Modifier.fillMaxSize()) {
                                     items(requests) { r ->
                                         ListItem(
@@ -1160,7 +1254,11 @@ fun FriendsDialog(
                                                     TextButton(
                                                         onClick = {
                                                             vm.accept(uid, r.fromUid) {
-                                                                Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show()
+                                                                Toast.makeText(
+                                                                    ctx,
+                                                                    it,
+                                                                    Toast.LENGTH_SHORT
+                                                                ).show()
                                                             }
                                                         },
                                                         enabled = !busy
@@ -1168,7 +1266,11 @@ fun FriendsDialog(
                                                     TextButton(
                                                         onClick = {
                                                             vm.reject(uid, r.fromUid) {
-                                                                Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show()
+                                                                Toast.makeText(
+                                                                    ctx,
+                                                                    it,
+                                                                    Toast.LENGTH_SHORT
+                                                                ).show()
                                                             }
                                                         },
                                                         enabled = !busy
@@ -1208,7 +1310,10 @@ fun FriendsDialog(
                                 ) { Text(if (busy) "发送中…" else "发送好友申请") }
 
                                 Spacer(Modifier.height(10.dp))
-                                Text("提示：唯一ID区分大小写显示，但搜索不区分大小写。", style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    "提示：唯一ID区分大小写显示，但搜索不区分大小写。",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
                             }
                         }
                     }
@@ -1217,39 +1322,71 @@ fun FriendsDialog(
                 // ===== 悬浮操作区 =====
 
                 // 左下角：删除模式切换
-                OutlinedIconButton(
-                    onClick = { vm.toggleDeleteMode() },
-                    enabled = !busy,
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(16.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = if (deleteMode) "退出删除模式" else "删除好友"
-                    )
-                }
+                if (tab == 0) {
+                    OutlinedButton(
+                        onClick = { vm.toggleDeleteMode() },
+                        enabled = !busy,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(16.dp)
+                    ) {
+                        Text(
+                            text = if (deleteMode) "退出删除模式" else "删除好友"
+                        )
+                    }
 
-                // 右下角：一键赠送 / 一键领取（垂直排列）
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(16.dp),
-                    //verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    FilledTonalIconButton(
-                        onClick = {
-                            vm.giftAll(uid) { Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show() }
-                        },
-                        enabled = !busy
-                    ) { Icon(Icons.Default.Favorite, contentDescription = "一键赠送") }
 
-                    FilledIconButton(
+                    // 右下角：一键赠送 / 一键领取（垂直排列）
+                    // ===== 右下角：一键（先赠送→后领取） =====
+                    val canGiftAny = remember(friends) {
+                        friends.any { f ->
+                            // 复用单个朋友处的“是否今天已送”的逻辑
+                            val ts = f.lastGiftToFriend?.toDate()
+                            if (ts == null) true else {
+                                val cal = java.util.Calendar.getInstance().apply { time = ts }
+                                val giftedKey = cal.get(java.util.Calendar.YEAR) * 10000 +
+                                        (cal.get(java.util.Calendar.MONTH) + 1) * 100 +
+                                        cal.get(java.util.Calendar.DAY_OF_MONTH)
+                                val now = java.util.Calendar.getInstance()
+                                val todayKey = now.get(java.util.Calendar.YEAR) * 10000 +
+                                        (now.get(java.util.Calendar.MONTH) + 1) * 100 +
+                                        now.get(java.util.Calendar.DAY_OF_MONTH)
+                                giftedKey != todayKey
+                            }
+                        }
+                    }
+                    val canClaimAny = remember(friends) { friends.any { it.pendingFromFriend > 0 } }
+
+// 0=一键赠送  1=一键领取
+                    var bulkPhase by remember(canGiftAny) { mutableStateOf(if (canGiftAny) 0 else 1) }
+
+// 按阶段决定文案与是否可用
+                    val bulkText = if (bulkPhase == 0) "一键赠送" else "一键领取"
+                    val bulkEnabled =
+                        if (bulkPhase == 0) !busy && canGiftAny else !busy && canClaimAny
+
+                    Button(
                         onClick = {
-                            vm.claimAll(uid) { Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show() }
+                            if (bulkPhase == 0) {
+                                vm.giftAll(uid) {
+                                    Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show()
+                                }
+                                // 赠送完：切到“领取”阶段
+                                bulkPhase = 1
+                            } else {
+                                vm.claimAll(uid) {
+                                    Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show()
+                                }
+                                // 领取后保持“领取”阶段；如需回到赠送，可在第二天刷新后自动复位
+                            }
                         },
-                        enabled = !busy
-                    ) { Icon(Icons.Default.Done, contentDescription = "一键领取") }
+                        enabled = bulkEnabled,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(16.dp)
+                    ) {
+                        Text(bulkText)
+                    }
                 }
             }
         }
@@ -1257,6 +1394,7 @@ fun FriendsDialog(
 }
 
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FriendRow(
     uniqueId: String,
@@ -1264,72 +1402,116 @@ private fun FriendRow(
     fed: Int,
     pendingFromFriend: Int,   // 待领取数
     canGiftToday: Boolean,    // 今天是否还能赠送
-    deleteMode: Boolean,      // 删除模式开关
+    deleteMode: Boolean,      // 删除模式开关（由外部页面统一控制）
     onGift: () -> Unit,
     onClaim: () -> Unit,
     onDelete: () -> Unit
 ) {
+    // 阶段：0=赠送阶段，1=领取阶段
+    var phase by remember(canGiftToday) { mutableStateOf(if (canGiftToday) 0 else 1) }
+
+    // 根据阶段与实际可用性决定按钮是否可点与文案
+    val buttonText = if (phase == 0) "赠送" else "领取"
+    val buttonEnabled = if (phase == 0) canGiftToday else pendingFromFriend > 0
+
+    // 顶部 state：放在 FriendRow(...) 内最前面
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 6.dp, vertical = 10.dp)
     ) {
-        // 第一行：唯一ID + 右侧图标操作
+        // 第一行：唯一ID + 右侧操作
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = uniqueId,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.weight(1f)
-            )
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                // UID：大字号
+                Text(
+                    text = uniqueId,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // Lv：小字号
+                Text(
+                    text = "Lv.$level",
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                )
+            }
 
             if (deleteMode) {
-                // 只显示“删除好友”icon
-                OutlinedIconButton(onClick = onDelete) {
+                IconButton(
+                    onClick = { showDeleteConfirm = true },   // ← 先弹确认
+                    colors = IconButtonDefaults.iconButtonColors(
+                        containerColor = Color.Transparent,
+                        contentColor = MaterialTheme.colorScheme.primary
+                    ),
+                    modifier = Modifier.height(32.dp),
+                ) {
                     Icon(Icons.Default.Close, contentDescription = "删除好友")
                 }
+
+                // 二级确认对话框
+                if (showDeleteConfirm) {
+                    AlertDialog(
+                        onDismissRequest = { showDeleteConfirm = false },
+                        title = { Text("确认删除好友？") },
+                        text = { Text("删除后将移除该好友关系，操作不可撤销。") },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    showDeleteConfirm = false
+                                    onDelete()                 // ← 真正执行删除
+                                }
+                            ) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showDeleteConfirm = false }) { Text("取消") }
+                        },
+                        icon = { Icon(Icons.Default.Close, contentDescription = null) },
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .width(280.dp)              // 固定宽度
+                            .heightIn(min = 100.dp),    // 最小高度
+                    )
+                }
             } else {
-                // 赠送：icon（今天送过则禁用）
-                FilledTonalIconButton(
-                    onClick = onGift,
-                    enabled = canGiftToday
+                CompositionLocalProvider(
+                    LocalMinimumInteractiveComponentEnforcement provides false
                 ) {
-                    Icon(Icons.Default.Favorite, contentDescription = "赠送 +5")
-                }
-
-                Spacer(Modifier.width(8.dp))
-
-                // 领取：icon + 角标（显示可领取数量）
-                BadgedBox(
-                    badge = {
-                        if (pendingFromFriend > 0) {
-                            Badge { Text(pendingFromFriend.toString()) }
-                        }
-                    }
-                ) {
-                    OutlinedIconButton(
-                        onClick = onClaim,
-                        enabled = pendingFromFriend > 0
+                    Button(
+                        onClick = {
+                            if (phase == 0) { onGift(); phase = 1 } else { onClaim() }
+                        },
+                        enabled = buttonEnabled,
+                        shape = RoundedCornerShape(20.dp),
+                        modifier = Modifier.height(32.dp),                 // ← 比如 32dp
+                        contentPadding = PaddingValues(horizontal = 20.dp) // ← 更紧凑
                     ) {
-                        Icon(Icons.Default.Star, contentDescription = "领取")
+                        Text(buttonText)
                     }
                 }
+
             }
         }
 
-        Spacer(Modifier.height(8.dp))
 
-        // 第二行：反色进度条（Lv.X · fed/1000）
+        Spacer(Modifier.height(12.dp))
+
+        // 第二行：进度条
         val progress = (fed / 1000f).coerceIn(0f, 1f)
-        val expText = "${fed}/1000"
-
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(22.dp)
+                .height(12.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .border(
                     width = 1.2.dp,
@@ -1343,13 +1525,6 @@ private fun FriendRow(
                 trackColor = Color.Transparent,
                 color = MaterialTheme.colorScheme.primary
             )
-            Box(Modifier.matchParentSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "Lv.$level  ·  $expText",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
             Box(
                 modifier = Modifier
                     .matchParentSize()
@@ -1359,15 +1534,8 @@ private fun FriendRow(
                             right = size.width * progress,
                             bottom = size.height
                         ) { this@drawWithContent.drawContent() }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "Lv.$level  ·  $expText",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color.White
-                )
-            }
+                    }
+            )
         }
     }
 }
@@ -1396,8 +1564,10 @@ fun GroupsDialog(onDismiss: () -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(20.dp),
-            tonalElevation = 8.dp,
-            modifier = Modifier.fillMaxWidth(1.0f).fillMaxHeight(0.80f)
+            // tonalElevation = 8.dp, // ← 移除
+            modifier = Modifier
+                .fillMaxWidth(1.0f)
+                .fillMaxHeight(0.7f)   // ← 从 0.80f 调整为 0.70f
         ) {
             Column(Modifier.fillMaxSize().padding(16.dp)) {
 
@@ -1411,20 +1581,54 @@ fun GroupsDialog(onDismiss: () -> Unit) {
                     }
                     Spacer(Modifier.height(10.dp))
                 } else {
-                    // 详情页顶部：返回 + 居中房间名
+                    // 详情页顶部：返回 + 居中房间名 + 右侧退出/解散
                     Row(
                         Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        // 左：返回
                         IconButton(onClick = { vm.closeRoom() }) {
-                            Icon(Icons.Default.KeyboardArrowLeft, contentDescription = "返回")
+                            Icon(
+                                Icons.Default.KeyboardArrowLeft,
+                                contentDescription = "返回",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
                         }
+
+                        // 中：房间名
                         val rn = myRooms.firstOrNull { it.id == selectedRoomId }?.name ?: selectedRoomId!!
                         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                            Text(rn, style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                rn,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 20.sp
+                            )
                         }
-                        Spacer(Modifier.width(48.dp)) // 右侧留白，近似对称
+
+                        // 右：退出/解散
+                        val meRole = myRooms.firstOrNull { it.id == selectedRoomId }?.role
+                        IconButton(
+                            onClick = {
+                                val rid = selectedRoomId!!
+                                if (meRole == "owner") {
+                                    vm.dissolve(uid, rid) { Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show() }
+                                } else {
+                                    vm.leave(uid, rid) { Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show() }
+                                }
+                                vm.closeRoom()
+                            },
+                            enabled = !busy
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ExitToApp,
+                                contentDescription = if (meRole == "owner") "解散该群" else "退出该群",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
+
                 }
 
                 // 主体
@@ -1453,10 +1657,6 @@ fun GroupsDialog(onDismiss: () -> Unit) {
                                                 OutlinedButton(enabled = !busy, onClick = {
                                                     vm.dissolve(uid, r.id) { Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show() }
                                                 }) { Text("解散") }
-                                            } else {
-                                                OutlinedButton(enabled = !busy, onClick = {
-                                                    vm.leave(uid, r.id) { Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show() }
-                                                }) { Text("退出") }
                                             }
                                         }
                                         Divider()
@@ -1526,10 +1726,6 @@ fun GroupsDialog(onDismiss: () -> Unit) {
                                                         "${r.name}  (#${r.id})",
                                                         style = MaterialTheme.typography.titleMedium
                                                     )
-                                                    Text(
-                                                        "房主：${r.ownerUid.take(6)}…",
-                                                        style = MaterialTheme.typography.bodySmall
-                                                    )
                                                 }
                                                 Button(
                                                     enabled = !busy,
@@ -1596,30 +1792,15 @@ fun GroupsDialog(onDismiss: () -> Unit) {
                             }
                         }
 
-                        // 左下角：退出/解散（看角色）
-                        val meRole = myRooms.firstOrNull { it.id == selectedRoomId }?.role
-                        OutlinedButton(
-                            onClick = {
-                                val rid = selectedRoomId!!
-                                if (meRole == "owner") {
-                                    vm.dissolve(uid, rid) { Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show() }
-                                } else {
-                                    vm.leave(uid, rid) { Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show() }
-                                }
-                            },
-                            enabled = !busy,
-                            modifier = Modifier.align(Alignment.BottomStart).padding(16.dp)
-                        ) { Text(if (meRole == "owner") "解散该群" else "退出该群") }
-
-                        // 右下角：统计
-                        FilledTonalButton(
-                            onClick = { /* no-op */ },
-                            enabled = false,
-                            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
-                        ) {
-                            val total = members.size
-                            Text("已打卡 $checkedCount / $total")
-                        }
+                        // 统计
+                        Text(
+                            text = "今日已打卡 $checkedCount / ${members.size}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(16.dp)
+                        )
                     }
                 }
             }
@@ -1627,6 +1808,7 @@ fun GroupsDialog(onDismiss: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun GroupMemberRow(
     uniqueId: String,
@@ -1643,7 +1825,7 @@ private fun GroupMemberRow(
             .fillMaxWidth()
             .padding(horizontal = 6.dp, vertical = 10.dp)
     ) {
-        // —— 第 1 行：ID（群主小图标） + 右侧打卡按钮 —— //
+        // —— 顶行：ID（可带群主小标） + 右侧紧凑按钮 —— //
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
@@ -1651,46 +1833,61 @@ private fun GroupMemberRow(
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = uniqueId,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
                 )
                 if (isOwner) {
                     Spacer(Modifier.width(6.dp))
                     Icon(
-                        imageVector = Icons.Default.Person,      // 小皇冠可换其他icon；这里用 Star 轻量明确
+                        imageVector = Icons.Default.Person,
                         contentDescription = "群主",
                         modifier = Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.primary
                     )
                 }
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "Lv.$level",
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                )
             }
 
+            // 右侧按钮：与 FriendRow 一致的紧凑风格（32dp 高、圆角 20dp、水平 padding 20dp）
             if (isMe) {
-                Button(
-                    onClick = onCheckin,
-                    Modifier.height(36.dp),
-                    shape = RoundedCornerShape(6.dp),
-                    enabled = !busy && !checkedToday
-                ) { Text(if (checkedToday) "已打卡" else "打卡") }
+                // 自己：按钮可点击
+                CompositionLocalProvider(
+                    LocalMinimumInteractiveComponentEnforcement provides false
+                ) {
+                    Button(
+                        onClick = onCheckin,
+                        enabled = !busy && !checkedToday,
+                        shape = RoundedCornerShape(20.dp),
+                        modifier = Modifier.height(32.dp),
+                        contentPadding = PaddingValues(horizontal = 20.dp)
+                    ) {
+                        Text(if (checkedToday) "已打卡" else "打卡")
+                    }
+                }
             } else {
-                AssistChip(
-                    onClick = { /* no-op */ },
-                    enabled = false,
-                    label = { Text(if (checkedToday) "已打卡" else "未打卡") }
+                Text(
+                    text = if (checkedToday) "已打卡" else "未打卡",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (checkedToday)
+                        MaterialTheme.colorScheme.primary
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(12.dp))
 
-        // —— 第 2 行：Lv + fed 进度条（与 FriendRow 同款） —— //
+        // —— 次行：与 FriendRow 同款的进度条（12dp 高、1.2dp 边框） —— //
         val progress = (fed / 1000f).coerceIn(0f, 1f)
-        val expText = "Lv.$level  ·  ${fed}/1000"
-
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(22.dp)
+                .height(12.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .border(
                     width = 1.2.dp,
@@ -1704,13 +1901,6 @@ private fun GroupMemberRow(
                 trackColor = Color.Transparent,
                 color = MaterialTheme.colorScheme.primary
             )
-            Box(Modifier.matchParentSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = expText,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
             Box(
                 modifier = Modifier
                     .matchParentSize()
@@ -1720,15 +1910,71 @@ private fun GroupMemberRow(
                             right = size.width * progress,
                             bottom = size.height
                         ) { this@drawWithContent.drawContent() }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = expText,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color.White
-                )
-            }
+                    }
+            )
         }
     }
 }
+
+
+@RequiresApi(Build.VERSION_CODES.Q)
+@Composable
+fun HollowButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    colors: ButtonColors = ButtonDefaults.buttonColors(
+        containerColor = MaterialTheme.colorScheme.primary
+    ),
+    height: Dp = 40.dp,
+    corner: Dp = 24.dp
+) {
+    val density = LocalDensity.current
+    var cs = MaterialTheme.typography
+
+    Button(
+        onClick = onClick,
+        shape = RoundedCornerShape(corner),
+        colors = colors,
+        contentPadding = PaddingValues(0.dp),
+        modifier = modifier
+            .height(height)
+            .width(72.dp)
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen } // 关键
+            .drawWithContent {
+                // 先画按钮（含容器/涟漪层等）
+                drawContent()
+
+                // 再用 CLEAR 把中间的文字镂空
+                drawIntoCanvas { canvas ->
+                    val p = android.graphics.Paint().apply {
+                        isAntiAlias = true
+                        isSubpixelText = true
+                        textSize = with(density) { cs.labelLarge.fontSize.toPx() }
+                        typeface = android.graphics.Typeface.create(
+                            android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD
+                        )
+
+                        if (android.os.Build.VERSION.SDK_INT >= 29) {
+                            blendMode = android.graphics.BlendMode.CLEAR
+                        } else {
+                            @Suppress("DEPRECATION")
+                            xfermode = android.graphics.PorterDuffXfermode(
+                                android.graphics.PorterDuff.Mode.CLEAR
+                            )
+                        }
+                    }
+
+                    val w = p.measureText(text)
+                    val fm = p.fontMetrics
+                    val x = (size.width - w) / 2f
+                    val y = size.height / 2f - (fm.ascent + fm.descent) / 2f
+                    canvas.nativeCanvas.drawText(text, x, y, p)
+                }
+            }
+    ) {
+        // 不放 Text；留空由上面的 CLEAR 来“显示文字”
+        Spacer(Modifier.fillMaxWidth())
+    }
+}
+

@@ -68,6 +68,7 @@ import com.example.gra.ui.viewmodel.SleepViewModel
 import java.time.Duration
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlin.math.sqrt
 
 
 val topBlue = Color(0xFFBFDFFF)    // 浅蓝，带点天蓝色
@@ -161,6 +162,7 @@ fun RecordsPage(
                 .padding(innerPadding)
                 .padding(16.dp)
         ) {
+            Spacer(modifier = Modifier.height(12.dp))
             // 第一块：饮食 & 运动（整块可点，跳转 food_exercise）
             SummaryCard(
                 intakeKcal = intake,          // 今日摄入（来自你的 VM）
@@ -171,11 +173,9 @@ fun RecordsPage(
                 onClick = { navController.navigate("food_exercise") }
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
-
             // 第二块 第三块 第四块：并列放置
             RecordsMosaic3x3(
-                bodyHeightRatio = 0.58f,
+                bodyHeightRatio = 0.6f,
                 onBodyClick = { navController.navigate("body") },
                 onWaterClick = { navController.navigate("water") },
                 onSleepClick = { navController.navigate("sleep") },
@@ -184,7 +184,6 @@ fun RecordsPage(
                 goalMl  = waterUi.goalMl,
                 sleepHours = last7Hours                 // ✅ 接入真实“近7天睡眠时长”
             )
-
         }
     }
 }
@@ -206,7 +205,6 @@ private fun SummaryCard(
         animationSpec = tween(900)
     )
 
-    val base = MaterialTheme.colorScheme.tertiary
     ElevatedCard(
         onClick = onClick, // ← ripple 铺满整个卡片
         modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp),
@@ -219,13 +217,14 @@ private fun SummaryCard(
         ) {
             Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                 // 左侧信息
+                Spacer(Modifier.height(8.dp))
                 LabelWithIndicator(
                     text = "饮食",
                     color = MaterialTheme.colorScheme.tertiary,
                     style = IndicatorStyle.Bar
                 )
                 Text("$intakeKcal kcal", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(24.dp))
                 LabelWithIndicator(
                     text = "运动",
                     color = MaterialTheme.colorScheme.secondary,
@@ -413,7 +412,7 @@ private fun LabelWithIndicator(
 @Composable
 fun RecordsMosaic3x3(
     // 左列上：身体数据所占的高度比例（默认 0.6，比 2/3 更“扁”）
-    bodyHeightRatio: Float = 0.60f,
+    bodyHeightRatio: Float = 0.7f,
     gap: Dp = 12.dp,
     onBodyClick: () -> Unit = {},
     onWaterClick: () -> Unit = {},
@@ -425,7 +424,7 @@ fun RecordsMosaic3x3(
 ) {
     // 用容器固定一个合理的总高度；你可以调这个高度让整体更紧凑或更高
     BoxWithConstraints(Modifier.fillMaxWidth().padding(top = gap)) {
-        val gridHeight = maxWidth * 0.9f    // 比如宽度的 0.9 倍高度
+        val gridHeight = maxWidth * 1.1f    // 比如宽度的 0.9 倍高度
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -433,7 +432,7 @@ fun RecordsMosaic3x3(
         ) {
             // 左列：宽度 2 份
             Column(
-                modifier = Modifier.weight(2f).fillMaxHeight()
+                modifier = Modifier.weight(2.3f).fillMaxHeight()
             ) {
                 BodyCard2x2(
                     weights = weights,            // ← 用真实数据
@@ -487,7 +486,12 @@ private fun BodyCard2x2(
         modifier = modifier
     ) {
         Column(Modifier.fillMaxSize().padding(16.dp)) {
-            Text("身体数据", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+            Text(
+                "身体数据",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
+            )
             Text(
                 "体重",
                 style = MaterialTheme.typography.labelMedium,               // 字体小一点
@@ -495,13 +499,14 @@ private fun BodyCard2x2(
                 modifier = Modifier.padding(top = 2.dp)
             )
             Spacer(Modifier.height(8.dp))
-            MinimalAreaLineChart(
-                points = weights,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(RoundedCornerShape(8.dp))
-            )
+
+                MinimalAreaLineChart(
+                    points = weights,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(8.dp))
+                )
         }
     }
 }
@@ -514,17 +519,31 @@ private fun WaterCard1x3(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    // 判断是否已喝水量大于目标量
-    val maxProgress = if (drunkMl > goalMl) drunkMl else goalMl
-    val p = if (maxProgress > 0) (drunkMl.toFloat() / maxProgress).coerceIn(0f, 1f) else 0f
     val density = LocalDensity.current
 
-    // 记录“进度条可用高度”，用于计算今日饮水文字的垂直位置
+    // 原有进度计算
+    val maxProgress = if (drunkMl > goalMl) drunkMl else goalMl
+    val targetP = if (maxProgress > 0) (drunkMl.toFloat() / maxProgress).coerceIn(0f, 1f) else 0f
+
+    // NEW: 动画进度，从 0 -> targetP
+    val progress = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(targetP) {
+        // 首次进入会从 0f 动到 targetP；后续数据变化也会顺滑过渡到新值
+        progress.animateTo(
+            targetValue = targetP,
+            animationSpec = androidx.compose.animation.core.tween(
+                durationMillis = 900,
+                easing = androidx.compose.animation.core.FastOutSlowInEasing
+            )
+        )
+    }
+
+    // 记录进度条像素高度
     var barHeightPx by remember { mutableStateOf(0) }
     val barHeightDp by remember(barHeightPx) { mutableStateOf(with(density) { barHeightPx.toDp() }) }
 
-    // 计算进度条填充高度
-    val levelTopDp = (barHeightDp * (1f - p)).coerceAtLeast(0.dp)
+    // CHANGED: 用动画进度计算文本的垂直位置
+    val levelTopDp = (barHeightDp * (1f - progress.value)).coerceAtLeast(0.dp)
 
     ElevatedCard(
         modifier = modifier.clickable(onClick = onClick),
@@ -535,35 +554,38 @@ private fun WaterCard1x3(
         Column(
             Modifier
                 .fillMaxSize()
-                .padding(12.dp) // 卡片内边距
+                .padding(12.dp)
         ) {
-            // 左上角标题
-            Text("饮水", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+            Text(
+                "饮水",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
+            )
 
             Spacer(Modifier.height(8.dp))
 
             Row(
-                Modifier
-                    .fillMaxSize(),
+                Modifier.fillMaxSize(),
                 verticalAlignment = Alignment.Top
             ) {
                 // 左侧：竖向进度条
                 Box(
                     Modifier
-                        .width(16.dp)                 // 你原本的宽度，按需微调
+                        .width(24.dp)
                         .fillMaxHeight()
                         .onGloballyPositioned { barHeightPx = it.size.height }
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)) // 轨道
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
                 ) {
-                    // 填充（自下而上）
+                    // CHANGED: 使用动画进度填充
                     Box(
                         Modifier
                             .fillMaxWidth()
-                            .fillMaxHeight(p)
+                            .fillMaxHeight(progress.value) // ← 动画中的 0f..targetP
                             .align(Alignment.BottomCenter)
                             .clip(RoundedCornerShape(bottomStart = 6.dp, bottomEnd = 6.dp))
-                            .background(MaterialTheme.colorScheme.primary)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.9f))
                     )
                 }
 
@@ -571,9 +593,7 @@ private fun WaterCard1x3(
 
                 // 右侧：刻度式数值区域
                 Box(Modifier.fillMaxSize()) {
-                    // 如果已喝水量大于目标量，则只显示已喝水量
                     if (drunkMl > goalMl) {
-                        // 显示已喝水量
                         Text(
                             text = "$drunkMl ml",
                             style = MaterialTheme.typography.bodyMedium,
@@ -581,7 +601,6 @@ private fun WaterCard1x3(
                             modifier = Modifier.align(Alignment.TopStart)
                         )
                     } else {
-                        // 顶部：目标刻度（目标量的位置）
                         Text(
                             text = "$goalMl ml",
                             style = MaterialTheme.typography.bodyMedium,
@@ -589,13 +608,9 @@ private fun WaterCard1x3(
                             modifier = Modifier.align(Alignment.TopStart)
                         )
 
-                        // 与进度高度平齐的“今日饮水量”
-                        Column(
-                            Modifier
-                                .fillMaxHeight()
-                                .padding(start = 0.dp)
-                        ) {
-                            Spacer(Modifier.height(levelTopDp))  // 根据进度动态调整
+                        Column(Modifier.fillMaxHeight()) {
+                            // CHANGED: 文本跟随动画进度一起移动
+                            Spacer(Modifier.height(levelTopDp))
                             Text(
                                 text = "$drunkMl ml",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -608,6 +623,7 @@ private fun WaterCard1x3(
         }
     }
 }
+
 
 
 @Composable
@@ -653,25 +669,10 @@ private fun SleepCard2x1(
                                 .weight(1f)
                                 .fillMaxHeight(frac)
                                 .clip(RoundedCornerShape(4.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.65f))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.9f))
                         )
                     }
                 }
-
-                // 目标线（8h）可选：取消就删掉这段
-                val goalFrac = (goalHours / maxBase).coerceIn(0f, 1f)
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .align(Alignment.BottomCenter)
-                        .offset(y = (-goalFrac).let { frac -> // 换算成距离底部的偏移
-                            // 用布局约束不方便，简单做个近似：在 padding 内部用 fraction 换算
-                            // 这里直接不偏移，若想精确可换 Canvas 方案
-                            0.dp
-                        })
-                        .background(Color.Transparent) // 若要画线请换成 color
-                )
             }
 
             Spacer(Modifier.height(6.dp))
@@ -708,28 +709,91 @@ private fun MinimalAreaLineChart(
         fun x(i: Int) = padX + w * (if (points.size == 1) 0f else i / (points.size - 1f))
         fun y(v: Float) = padTop + h * (1f - (v - minV) / span)
 
-        // 折线路径
-        val line = Path().apply {
-            points.indices.forEach { i ->
-                val xi = x(i); val yi = y(points[i])
-                if (i == 0) moveTo(xi, yi) else lineTo(xi, yi)
-            }
+        if (points.size == 1) {
+            // 单点：画一个短横线或小圆点
+            val xi = x(0)
+            val yi = y(points[0])
+            drawLine(color, Offset(xi - 6f, yi), Offset(xi + 6f, yi), strokeWidth = 3f)
+            return@Canvas
         }
-        // 面积路径
+
+        // 1) 先把数值转换为 Offset 点列
+        val pts = points.indices.map { i -> Offset(x(i), y(points[i])) }
+        val firstX = pts.first().x
+        val lastX = pts.last().x
+        val bottomY = padTop + h
+
+        // 2) 用单调保形曲线生成“平滑折线”
+        val line = buildMonotonePath(pts)
+
+        // 3) 面积路径：在曲线两端落回到底边并闭合
         val area = Path().apply {
             addPath(line)
-            lineTo(x(points.lastIndex), padTop + h)
-            lineTo(x(0), padTop + h)
+            lineTo(lastX, bottomY)
+            lineTo(firstX, bottomY)
             close()
         }
 
         // 面积填充（同色淡化）
         drawPath(area, color.copy(alpha = 0.18f))
-        // 折线（无圆点、无数值）
+
+        // 平滑折线（无圆点、无数值）
         drawPath(
-            line,
+            path = line,
             color = color,
             style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
         )
     }
+}
+
+
+private fun buildMonotonePath(points: List<Offset>): Path {
+    val n = points.size
+    val path = Path()
+    if (n == 0) return path
+    path.moveTo(points[0].x, points[0].y)
+    if (n == 1) return path
+
+    val x = FloatArray(n) { points[it].x }
+    val y = FloatArray(n) { points[it].y }
+    val d = FloatArray(n - 1) // 割线斜率
+
+    for (i in 0 until n - 1) {
+        val dx = x[i + 1] - x[i]
+        d[i] = if (dx != 0f) (y[i + 1] - y[i]) / dx else 0f
+    }
+
+    val m = FloatArray(n) // 端点切线
+    m[0] = d[0]
+    for (i in 1 until n - 1) {
+        m[i] = if (d[i - 1] * d[i] <= 0f) 0f else (d[i - 1] + d[i]) / 2f
+    }
+    m[n - 1] = d[n - 2]
+
+    // Fritsch–Carlson 限制，防止过冲
+    for (i in 0 until n - 1) {
+        if (d[i] == 0f) {
+            m[i] = 0f; m[i + 1] = 0f
+        } else {
+            val a = m[i] / d[i]
+            val b = m[i + 1] / d[i]
+            val s = a * a + b * b
+            if (s > 9f) {
+                val t = 3f / sqrt(s)
+                m[i] = t * a * d[i]
+                m[i + 1] = t * b * d[i]
+            }
+        }
+    }
+
+    // Hermite → Cubic Bézier
+    for (i in 0 until n - 1) {
+        val h = x[i + 1] - x[i]
+        val c1x = x[i] + h / 3f
+        val c1y = y[i] + m[i] * h / 3f
+        val c2x = x[i + 1] - h / 3f
+        val c2y = y[i + 1] - m[i + 1] * h / 3f
+        path.cubicTo(c1x, c1y, c2x, c2y, x[i + 1], y[i + 1])
+    }
+    return path
 }
