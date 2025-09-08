@@ -267,7 +267,9 @@ private fun MeasureCard(
         color = Color.White.copy(alpha = 0.7f),
         modifier = modifier.height(110.dp)
     ) {
-        Box(Modifier.fillMaxSize().padding(14.dp)) {
+        Box(Modifier
+            .fillMaxSize()
+            .padding(14.dp)) {
             Column(Modifier.align(Alignment.TopStart)) {
                 Text(title, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(6.dp))
@@ -304,7 +306,9 @@ private fun AddMeasureSheet(
     val context = LocalContext.current
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+        Column(Modifier
+            .fillMaxWidth()
+            .padding(16.dp)) {
             Text("记录${type.label}（单位：${type.unit}）", style = MaterialTheme.typography.titleMedium)
 
             Spacer(Modifier.height(6.dp))
@@ -528,7 +532,9 @@ private fun EditMeasureSheet(
     val context = LocalContext.current
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+        Column(Modifier
+            .fillMaxWidth()
+            .padding(16.dp)) {
             Text("编辑${type.label}", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
 
@@ -639,3 +645,4 @@ private fun buildMonotonePath(points: List<Offset>): Path {
     }
     return path
 }
+

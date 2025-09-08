@@ -1,9 +1,11 @@
 package com.example.gra
 
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.annotation.RequiresApi
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -14,7 +16,6 @@ import com.example.gra.ui.records.FoodExercisePage
 import com.example.gra.ui.MainPage
 import com.example.gra.ui.MinePage
 import com.example.gra.ui.RegisterPage
-import com.example.gra.ui.SetUniqueIdPage
 import com.example.gra.ui.data.AppDatabase
 import com.example.gra.ui.records.ExercisePage
 import com.example.gra.ui.records.RecordsPage
@@ -27,10 +28,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
+import com.example.gra.ui.guidePage.OnboardingBasicPage
+import com.example.gra.ui.guidePage.OnboardingIdPage
+import com.example.gra.ui.guidePage.OnboardingResultPage
 import com.example.gra.ui.records.SleepPage
 import com.example.gra.ui.records.WaterPage
 
 class MainActivity : ComponentActivity() {
+    @RequiresApi(Build.VERSION_CODES.Q)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // ① 启动时把 CSV 导入到 Room（只在第一次为空时导入）
@@ -97,9 +102,9 @@ class MainActivity : ComponentActivity() {
                     composable("mine") {
                         MinePage(navController)
                     }
-                    composable("set_unique_id") {
-                        SetUniqueIdPage(navController)
-                    }
+                    composable("onboarding/id")     { OnboardingIdPage(navController) }
+                    composable("onboarding/basic")  { OnboardingBasicPage(navController) }
+                    composable("onboarding/result") { OnboardingResultPage(navController) }
                 }
             }
         }

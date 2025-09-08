@@ -1,5 +1,6 @@
 package com.example.gra.ui.records
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -69,7 +70,10 @@ import java.time.Duration
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.math.sqrt
-
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.runtime.*
 
 val topBlue = Color(0xFFBFDFFF)    // 浅蓝，带点天蓝色
 val bottomGreen = Color(0xFFCCF2D1) // 浅绿，柔和青草色
@@ -90,7 +94,7 @@ fun RecordsPage(
 
     // 拿到身体数据 VM（与 BodyMeasurePage 同一个类）
     val bodyVm: BodyMeasureViewModel = viewModel()
-
+    //val targets by bodyVm.targets.collectAsState()
 // 让 VM 切到“体重”维度
     LaunchedEffect(Unit) { bodyVm.select(BodyType.WEIGHT) }
 
@@ -104,6 +108,14 @@ fun RecordsPage(
     // —— 睡眠数据（用 SleepViewModel 现有的 sessions） ——
     val sleepVm: SleepViewModel = viewModel()
     val sleepSessions by sleepVm.sessions.collectAsState(emptyList())
+
+    // 1) 取健康档案（含 bmr / tdee / recoMaintain / recoCut）
+    val health = bodyVm.health.collectAsState(initial = null).value
+
+    // 2) 计算“目标摄入 / 目标消耗”
+    val targetIntake = health?.recoMaintain ?: health?.tdee ?: 0
+    val targetBurn   = ((health?.tdee ?: 0) - (health?.bmr ?: 0)).coerceAtLeast(0)
+
 
 // 近 7 天（含今天），每天 0:00~24:00 的总睡眠小时（浮点）
     val zone = remember { ZoneId.systemDefault() }
@@ -167,9 +179,8 @@ fun RecordsPage(
             SummaryCard(
                 intakeKcal = intake,          // 今日摄入（来自你的 VM）
                 burnKcal   = burn,            // 今日消耗
-                // 这两个先写死，之后接“根据身高体重计算”的推荐值即可
-                recommendedIntake = 2200,
-                recommendedBurn   = 750,
+                recommendedIntake = targetIntake,
+                recommendedBurn   = targetBurn,
                 onClick = { navController.navigate("food_exercise") }
             )
 
@@ -196,13 +207,25 @@ private fun SummaryCard(
     recommendedBurn: Int,
     onClick: () -> Unit
 ) {
+    fun safeProgress(current: Int, target: Int): Float {
+        if (target <= 0) return 0f
+        val v = current.toFloat() / target.toFloat()
+        val c = v.coerceAtLeast(0f)
+        return if (c.isFinite()) c else 0f
+    }
+
+    val intakeTarget = safeProgress(intakeKcal, recommendedIntake)
+    val burnTarget   = safeProgress(burnKcal,   recommendedBurn)
+
     val intakeProgress by animateFloatAsState(
-        targetValue = (intakeKcal / recommendedIntake.toFloat()),
-        animationSpec = tween(900)
+        targetValue = intakeTarget,
+        animationSpec = tween(durationMillis = 900),
+        label = "intakeProgress"
     )
     val burnProgress by animateFloatAsState(
-        targetValue = (burnKcal / recommendedBurn.toFloat()),
-        animationSpec = tween(900)
+        targetValue = burnTarget,
+        animationSpec = tween(durationMillis = 900),
+        label = "burnProgress"
     )
 
     ElevatedCard(
@@ -244,7 +267,7 @@ private fun SummaryCard(
                         trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
                         startAngle = -90f,
                         counterClockwise = true,
-                        stroke = 14.dp,
+                        stroke = 16.dp,
                         gapBetweenRings = 12.dp
                     )
                 }
@@ -796,4 +819,44 @@ private fun buildMonotonePath(points: List<Offset>): Path {
         path.cubicTo(c1x, c1y, c2x, c2y, x[i + 1], y[i + 1])
     }
     return path
+}
+
+@Composable
+private fun rememberEnterKey(): Int {
+    val owner = LocalLifecycleOwner.current
+    var key by remember { mutableStateOf(0) }
+    DisposableEffect(owner) {
+        val obs = LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_START) key++ // 每次页面进入前台 +1
+        }
+        owner.lifecycle.addObserver(obs)
+        onDispose { owner.lifecycle.removeObserver(obs) }
+    }
+    return key
+}
+
+@Composable
+private fun animateProgressOnEnter(
+    ready: Boolean,      // 目标是否就绪（>0 才算）
+    target: Float,       // 允许 >1，用于第二圈
+    enterKey: Any,       // 每次变化都重播
+    maxLoops: Float = 2f // 最多几圈，避免跨度过大
+): Float {
+    val anim = remember { Animatable(0f) }
+    LaunchedEffect(enterKey) { anim.snapTo(0f) } // 进入页面先复位
+    LaunchedEffect(ready, target, enterKey) {
+        if (!ready) return@LaunchedEffect
+        val t = target.let { if (it.isFinite()) it else 0f }
+            .coerceIn(0f, maxLoops.coerceAtLeast(1f))
+        anim.snapTo(0f)              // 从 0 开始播
+        anim.animateTo(t, tween(900))
+    }
+    return anim.value
+}
+
+/** 允许溢出的安全进度（只防除 0/NaN，不夹到 1） */
+private fun overflowProgress(current: Int, target: Int): Float {
+    if (target <= 0) return 0f
+    val raw = current.toFloat() / target.toFloat()
+    return if (raw.isFinite()) raw else 0f
 }

@@ -34,6 +34,8 @@ val BODY_DISPLAY_ORDER = listOf(
     BodyType.CHEST,      // 胸围
 )
 
+enum class Sex { Male, Female }
+
 class BodyMeasureViewModel(app: Application) : AndroidViewModel(app) {
     // 2) 成员
     private val remote = Remote.create()
@@ -114,4 +116,94 @@ class BodyMeasureViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    // ---------- 健康档案 UI State ----------
+    data class HealthUi(
+        val sex: String = "male",
+        val heightCm: Double = 0.0,
+        val age: Int = 0,
+        val weightKg: Double = 0.0,
+        val bmr: Int = 0,
+        val tdee: Int = 0,
+        val recoMaintain: Int = 0,
+        val recoCut: Int = 0
+    )
+
+    private val _health = MutableStateFlow<HealthUi?>(null)
+    val health: StateFlow<HealthUi?> = _health
+
+    init {
+        // 订阅远端 health 文档
+        viewModelScope.launch {
+            uidOrNull()?.let { uid ->
+                remote.observeHealthProfile(uid).collect { hp ->
+                    _health.value = hp?.let {
+                        HealthUi(
+                            sex = it.sex ?: "male",
+                            heightCm = it.heightCm ?: 0.0,
+                            age = it.age ?: 0,
+                            weightKg = it.weightKg ?: 0.0,
+                            bmr = it.bmr ?: 0,
+                            tdee = it.tdee ?: 0,
+                            recoMaintain = it.recoMaintain ?: 0,
+                            recoCut = it.recoCut ?: 0
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // ---------- 计算推荐（Mifflin–St Jeor） ----------
+    private fun computeTargets(
+        sex: String,
+        heightCm: Double,
+        weightKg: Double,
+        age: Int,
+        activityFactor: Double = 1.4  // 轻中等活动；你可根据实际改成用户可选
+    ): Triple<Int, Int, Pair<Int, Int>> {
+        val bmr = ((10 * weightKg) + (6.25 * heightCm) - (5 * age) + if (sex == "female") -161 else 5).toInt()
+        val tdee = (bmr * activityFactor).toInt()
+        val maintain = tdee
+        val cut = (tdee * 0.85).toInt() // 示例：维持 -15%
+        return Triple(bmr, tdee, maintain to cut)
+    }
+
+    // ---------- 保存健康档案（Onboarding / Mine 都调它） ----------
+    fun saveHealthProfile(sex: String, heightCm: Double, weightKg: Double, age: Int) {
+        viewModelScope.launch {
+            val (bmr, tdee, mc) = computeTargets(sex, heightCm, weightKg, age)
+            val maintain = mc.first
+            val cut = mc.second
+            uidOrNull()?.let { uid ->
+                try {
+                    remote.setHealthProfile(
+                        uid,
+                        Remote.HealthProfile(
+                            sex = sex,
+                            heightCm = heightCm,
+                            age = age,
+                            weightKg = weightKg,
+                            bmr = bmr,
+                            tdee = tdee,
+                            recoMaintain = maintain,
+                            recoCut = cut
+                        )
+                    )
+                } catch (e: Exception) {
+                    android.util.Log.e("Health", "save failed", e)
+                }
+            }
+        }
+    }
+
+    /** 只改某一两个字段用（编辑卡片方便） */
+    fun updateHealth(fields: Map<String, Any?>) {
+        viewModelScope.launch {
+            uidOrNull()?.let { uid ->
+                try { remote.updateHealthFields(uid, fields) } catch (_: Exception) {}
+            }
+        }
+    }
+
 }

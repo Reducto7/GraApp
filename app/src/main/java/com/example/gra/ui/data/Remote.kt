@@ -355,6 +355,61 @@ class Remote(private val db: FirebaseFirestore = Firebase.firestore) {
         }.map { it.firstOrNull() }
     }
 
+    // Remote.kt —— 新增在合适位置（例如 Water 一节上方/下方均可）
+// Remote.kt —— Health Profile in /users/{uid}/meta/health
+    data class HealthProfile(
+        val sex: String? = null,          // "male" / "female"
+        val heightCm: Double? = null,
+        val age: Int? = null,
+        val weightKg: Double? = null,
+        val bmr: Int? = null,
+        val tdee: Int? = null,
+        val recoMaintain: Int? = null,    // 维持体重推荐摄入
+        val recoCut: Int? = null          // 减脂期推荐摄入（示例：维持-15%）
+    )
+
+    private fun healthProfileDoc(uid: String) =
+        user(uid).collection("meta").document("health")
+
+    /** 监听健康档案（单文档） */
+    fun observeHealthProfile(uid: String): kotlinx.coroutines.flow.Flow<HealthProfile?> =
+        listenDoc(healthProfileDoc(uid)) { d ->
+            HealthProfile(
+                sex = d.getString("sex"),
+                heightCm = d.getDouble("heightCm"),
+                age = (d.getLong("age") ?: 0L).toInt(),
+                weightKg = d.getDouble("weightKg"),
+                bmr = (d.getLong("bmr") ?: 0L).toInt(),
+                tdee = (d.getLong("tdee") ?: 0L).toInt(),
+                recoMaintain = (d.getLong("recoMaintain") ?: 0L).toInt(),
+                recoCut = (d.getLong("recoCut") ?: 0L).toInt()
+            )
+        }
+
+    /** 合并写（不会把没传的字段清空） */
+    suspend fun setHealthProfile(uid: String, hp: HealthProfile) {
+        healthProfileDoc(uid).set(
+            mapOf(
+                "sex" to hp.sex,
+                "heightCm" to hp.heightCm,
+                "age" to hp.age,
+                "weightKg" to hp.weightKg,
+                "bmr" to hp.bmr,
+                "tdee" to hp.tdee,
+                "recoMaintain" to hp.recoMaintain,
+                "recoCut" to hp.recoCut
+            ),
+            SetOptions.merge()   // ✅ 必须 merge，避免覆盖成 null
+        ).await()
+    }
+
+    /** 部分字段更新（编辑页面便捷调用） */
+    suspend fun updateHealthFields(uid: String, fields: Map<String, Any?>) {
+        healthProfileDoc(uid).set(fields, SetOptions.merge()).await()
+    }
+
+
+
     // ------------------------------
     // Growth / Tree
     // ------------------------------

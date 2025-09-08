@@ -111,10 +111,17 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.sp
+import com.example.gra.ui.viewmodel.BodyMeasureViewModel
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlin.math.hypot
 import kotlin.math.sqrt
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.*
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 data class ExerciseUi(
     val index: Int,
@@ -126,6 +133,13 @@ data class ExerciseItemUi(
     val minutes: Int,
     val kcal: Int
 )
+
+private fun safeProgress(current: Int, target: Int): Float {
+    if (target <= 0) return 0f
+    val p = current.toFloat() / target.toFloat()
+    val c = p.coerceAtLeast(0f)
+    return if (c.isFinite()) c else 0f
+}
 
 private enum class TrendMode { Line, Diff }
 
@@ -145,6 +159,18 @@ fun FoodExercisePage(
     val trendDays  by foodViewModel.trendDays.collectAsState()
     val trendIn    by foodViewModel.trendIntake.collectAsState()
     val trendBurn  by foodViewModel.trendBurn.collectAsState()
+
+    // 1) 取健康档案（含 bmr / tdee / recoMaintain / recoCut）
+    val bodyVm: BodyMeasureViewModel = viewModel()
+    val health = bodyVm.health.collectAsState(initial = null).value
+
+// 2) 计算“目标摄入 / 目标消耗”
+// - 摄入目标：优先用维持体重 recoMaintain（你也可以改成 recoCut 作为减脂模式）
+// - 消耗目标：用「活动消耗」≈ TDEE - BMR，更贴近“运动圈/消耗圈”的含义
+    val targetIntake = (health?.recoMaintain ?: health?.tdee ?: 0).coerceAtLeast(1)
+    val targetBurn   = ((health?.tdee ?: 0) - (health?.bmr ?: 0)).coerceAtLeast(1) // 或者直接用 health?.tdee ?: 0
+
+
 
     Scaffold(
         topBar = {
@@ -224,7 +250,7 @@ fun FoodExercisePage(
                             )
                         },
                         onAddClick = { navController.navigate("food") },
-                        recommendedIntake = 2200,
+                        recommendedIntake = targetIntake,
                         onDeleteItem = { mealIdx, itemIdx ->
                             foodViewModel.deleteMealItem(recordDate, mealIdx, itemIdx)
                         }
@@ -243,7 +269,7 @@ fun FoodExercisePage(
                             )
                         },
                         onAddClick = { navController.navigate("exercise") },
-                        recommendedBurn = 750,
+                        recommendedBurn   = targetBurn,
                         onDeleteSession = { sessionIdx ->
                             foodViewModel.deleteExerciseItem(recordDate, sessionIdx)
                         }
@@ -334,11 +360,6 @@ private fun FoodOnlyCard(
                         }
                     }
 
-                    val progress by animateFloatAsState(
-                        targetValue = totalKcal / recommendedIntake.toFloat(),
-                        animationSpec = tween(900)
-                    )
-
                     // 预留右上角 + 的空间（不参与测量的内容尺寸）
                     Box(modifier = Modifier.padding(end = 44.dp)) {
                         // 真实的环形绘制区域：给出确定的宽高，Row 才能算出“行高”
@@ -348,13 +369,28 @@ private fun FoodOnlyCard(
                                 .offset(x = (-8).dp),
                             contentAlignment = Alignment.Center
                         ) {
+                            // 进入触发键（放在 FoodOnlyCard 顶部或页面层也行）
+                            val enterKey = rememberEnterKey()
+
+// 就绪：推荐目标 > 0 才开播
+                            val intakeReady = recommendedIntake > 0
+                            val progressTarget = if (intakeReady) overflowProgress(totalKcal, recommendedIntake) else 0f
+
+                            val progress = animateProgressOnEnter(
+                                ready    = intakeReady,
+                                target   = progressTarget,
+                                enterKey = enterKey,
+                                maxLoops = 2f   // 最多两圈；想多圈可调大
+                            )
+
                             GradientRingProgress(
                                 progress   = progress,
-                                baseColor  = MaterialTheme.colorScheme.tertiary,     // 你想要的主色
-                                trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),     // 轨道浅灰
+                                baseColor  = MaterialTheme.colorScheme.tertiary,
+                                trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                                 startAngle = -90f,
-                                stroke     = 14.dp
+                                stroke     = 20.dp
                             )
+
                         }
                     }
                 }
@@ -713,10 +749,7 @@ private fun ExerciseOnlyCard(
                     }
 
                     // 右侧单环（尺寸固定 + 避开右上角 + 号）
-                    val progress by animateFloatAsState(
-                        targetValue = (totalKcal / recommendedBurn.toFloat()).coerceIn(0f, 1f),
-                        animationSpec = tween(900)
-                    )
+
                     Box(modifier = Modifier.padding(end = 44.dp)) {
                         Box(
                             modifier = Modifier
@@ -724,12 +757,24 @@ private fun ExerciseOnlyCard(
                                 .offset(x = (-8).dp),
                             contentAlignment = Alignment.Center
                         ) {
+                            val enterKey = rememberEnterKey()
+
+                            val burnReady = recommendedBurn > 0
+                            val progressTarget = if (burnReady) overflowProgress(totalKcal, recommendedBurn) else 0f
+
+                            val progress = animateProgressOnEnter(
+                                ready    = burnReady,
+                                target   = progressTarget,
+                                enterKey = enterKey,
+                                maxLoops = 2f
+                            )
+
                             GradientRingProgress(
                                 progress   = progress,
-                                baseColor  = MaterialTheme.colorScheme.secondary,     // 你想要的主色
-                                trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),     // 轨道浅灰
+                                baseColor  = MaterialTheme.colorScheme.secondary,
+                                trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                                 startAngle = -90f,
-                                stroke     = 14.dp
+                                stroke     = 20.dp
                             )
                         }
                     }
@@ -1474,8 +1519,47 @@ private fun buildMonotonePath(points: List<Offset>): Path {
     return path
 }
 
+@Composable
+private fun rememberEnterKey(): Int {
+    val owner = LocalLifecycleOwner.current
+    var key by remember { mutableStateOf(0) }
+    DisposableEffect(owner) {
+        val obs = LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_START) { key++ } // 每次进入前台 +1
+        }
+        owner.lifecycle.addObserver(obs)
+        onDispose { owner.lifecycle.removeObserver(obs) }
+    }
+    return key
+}
 
 
+@Composable
+private fun animateProgressOnEnter(
+    ready: Boolean,      // 目标是否就绪（>0 才算）
+    target: Float,       // 允许 >1（用于第二圈）
+    enterKey: Any,       // 每次变更都重播
+    maxLoops: Float = 2f // 限制最多几圈，避免跨度过大
+): Float {
+    val anim = remember { Animatable(0f) }
 
+    // 进入页面：重置到 0
+    LaunchedEffect(enterKey) { anim.snapTo(0f) }
 
+    // 目标就绪时，从 0 播到目标；目标未就绪就先保持 0
+    LaunchedEffect(ready, target, enterKey) {
+        if (!ready) return@LaunchedEffect
+        val t = target.let { if (it.isFinite()) it else 0f }
+            .coerceIn(0f, maxLoops.coerceAtLeast(1f))
+        anim.snapTo(0f)
+        anim.animateTo(t, tween(900))
+    }
+    return anim.value
+}
 
+// 允许溢出的安全进度（只防除 0 / NaN，不夹到 1）
+private fun overflowProgress(current: Int, target: Int): Float {
+    if (target <= 0) return 0f
+    val raw = current.toFloat() / target.toFloat()
+    return if (raw.isFinite()) raw else 0f
+}

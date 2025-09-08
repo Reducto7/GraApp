@@ -82,7 +82,7 @@ fun navigateAfterLogin(remote: Remote, navController: NavController) {
     CoroutineScope(Dispatchers.Main).launch {
         try {
             val p = remote.getUserProfile(uid)
-            val route = if (p?.uniqueId.isNullOrBlank()) "set_unique_id" else "main"
+            val route = if (p?.uniqueId.isNullOrBlank()) "guide" else "main"
             android.util.Log.d("Auth", "post-login route=$route (uniqueId=${p?.uniqueId})")
             navController.navigate(route) {
                 popUpTo("login") { inclusive = true }
@@ -90,7 +90,7 @@ fun navigateAfterLogin(remote: Remote, navController: NavController) {
         } catch (e: Exception) {
             android.util.Log.e("Auth", "profile load failed", e)
             // 出错时直接去设置ID，避免卡住
-            navController.navigate("set_unique_id") {
+            navController.navigate("guide") {
                 popUpTo("login") { inclusive = true }
             }
         }

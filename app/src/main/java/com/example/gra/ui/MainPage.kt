@@ -1523,7 +1523,7 @@ private fun FriendRow(
                 progress = progress,
                 modifier = Modifier.matchParentSize(),
                 trackColor = Color.Transparent,
-                color = MaterialTheme.colorScheme.primary
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
             )
             Box(
                 modifier = Modifier
@@ -1899,7 +1899,7 @@ private fun GroupMemberRow(
                 progress = progress,
                 modifier = Modifier.matchParentSize(),
                 trackColor = Color.Transparent,
-                color = MaterialTheme.colorScheme.primary
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
             )
             Box(
                 modifier = Modifier

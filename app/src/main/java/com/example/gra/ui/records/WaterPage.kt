@@ -11,6 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -19,11 +20,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import java.text.SimpleDateFormat
+import java.time.LocalDate
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -33,12 +36,16 @@ fun WaterPage(
     vm: WaterViewModel = viewModel()   // ✅ 符合你的页面写法
 ) {
     val ui by vm.ui.collectAsState()
-
-    // 首次进入加载目标
     LaunchedEffect(Unit) { vm.loadGoal() }
 
     var showGoalEditor by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val todayStr = remember {
+        SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+    }
+    val selectedLocalDate = remember(ui.date) { LocalDate.parse(ui.date) }
 
     Scaffold(
         topBar = {
@@ -47,6 +54,34 @@ fun WaterPage(
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    // 📅 选择记录日期（≤ 今天）
+                    IconButton(
+                        onClick = {
+                            val today = LocalDate.now()
+                            android.app.DatePickerDialog(
+                                context,
+                                { _, y, m, d ->
+                                    val picked = LocalDate.of(y, m + 1, d)
+                                    if (!picked.isAfter(today)) {
+                                        vm.setRecordDate(picked)
+                                    }
+                                },
+                                selectedLocalDate.year,
+                                selectedLocalDate.monthValue - 1,
+                                selectedLocalDate.dayOfMonth
+                            ).apply {
+                                // 仅允许选择 <= 今天
+                                datePicker.maxDate = System.currentTimeMillis()
+                            }.show()
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DateRange,
+                            contentDescription = "选择记录日期"
+                        )
                     }
                 }
             )
@@ -106,16 +141,15 @@ fun WaterPage(
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
+                        val dateLine =
+                            if (ui.date == todayStr) "今天 · ${ui.date}" else ui.date
                         Text(
-                            "今天 · ${ui.date}",
+                            dateLine,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    IconButton(
-                        onClick = { showGoalEditor = !showGoalEditor },
-                        //enabled = ui.signedIn
-                    ) {
+                    IconButton(onClick = { showGoalEditor = !showGoalEditor }) {
                         Icon(Icons.Filled.Edit, contentDescription = "修改目标")
                     }
                 }

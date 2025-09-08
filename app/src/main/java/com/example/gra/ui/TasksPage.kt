@@ -99,7 +99,7 @@ fun TasksPage(
                         colors = listOf(topBlue, bottomGreen)
                     )
                 )
-                .padding(16.dp)
+                .padding(24.dp)
         ) {
             LazyColumn(
                 modifier = Modifier.fillMaxWidth(),
@@ -119,7 +119,7 @@ fun TasksPage(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(12.dp),
+                                    .padding(16.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Column(Modifier.weight(1f)) {
