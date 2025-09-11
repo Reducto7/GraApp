@@ -167,9 +167,13 @@ fun FoodExercisePage(
 // 2) 计算“目标摄入 / 目标消耗”
 // - 摄入目标：优先用维持体重 recoMaintain（你也可以改成 recoCut 作为减脂模式）
 // - 消耗目标：用「活动消耗」≈ TDEE - BMR，更贴近“运动圈/消耗圈”的含义
-    val targetIntake = (health?.recoMaintain ?: health?.tdee ?: 0).coerceAtLeast(1)
-    val targetBurn   = ((health?.tdee ?: 0) - (health?.bmr ?: 0)).coerceAtLeast(1) // 或者直接用 health?.tdee ?: 0
+    val targetIntake = (health?.planIntakeKcalPerDay ?: 0)
+        .takeIf { it > 0 }
+        ?: (health?.recoMaintain ?: health?.tdee ?: 0)
 
+    val targetBurn = (health?.planBurnKcalPerDay ?: 0)
+        .takeIf { it > 0 }
+        ?: ((health?.tdee ?: 0) - (health?.bmr ?: 0)).coerceAtLeast(0)
 
 
     Scaffold(

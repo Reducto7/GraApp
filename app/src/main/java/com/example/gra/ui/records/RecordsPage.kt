@@ -109,12 +109,17 @@ fun RecordsPage(
     val sleepVm: SleepViewModel = viewModel()
     val sleepSessions by sleepVm.sessions.collectAsState(emptyList())
 
-    // 1) 取健康档案（含 bmr / tdee / recoMaintain / recoCut）
+    // 1) 取健康档案（含 bmr / tdee / recoMaintain / planIntakeKcalPerDay / planBurnKcalPerDay）
     val health = bodyVm.health.collectAsState(initial = null).value
 
-    // 2) 计算“目标摄入 / 目标消耗”
-    val targetIntake = health?.recoMaintain ?: health?.tdee ?: 0
-    val targetBurn   = ((health?.tdee ?: 0) - (health?.bmr ?: 0)).coerceAtLeast(0)
+// 2) 计算“目标摄入 / 目标消耗”——优先使用 MinePage 保存的计划值；没有时回退到旧逻辑
+    val targetIntake = (health?.planIntakeKcalPerDay ?: 0)
+        .takeIf { it > 0 }
+        ?: (health?.recoMaintain ?: health?.tdee ?: 0)
+
+    val targetBurn = (health?.planBurnKcalPerDay ?: 0)
+        .takeIf { it > 0 }
+        ?: ((health?.tdee ?: 0) - (health?.bmr ?: 0)).coerceAtLeast(0)
 
 
 // 近 7 天（含今天），每天 0:00~24:00 的总睡眠小时（浮点）

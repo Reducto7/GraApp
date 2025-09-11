@@ -92,6 +92,9 @@ dependencies {
 
     implementation ("com.airbnb.android:lottie-compose:6.4.0")
 
+    implementation ("io.coil-kt:coil-compose:2.6.0")
+
+    implementation ("com.google.firebase:firebase-storage-ktx")
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

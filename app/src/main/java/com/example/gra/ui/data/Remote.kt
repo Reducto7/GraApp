@@ -7,6 +7,7 @@ import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
+import com.google.firebase.storage.FirebaseStorage
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -51,6 +52,17 @@ class Remote(private val db: FirebaseFirestore = Firebase.firestore) {
     }
 
     private fun user(uid: String) = db.collection(COLL_USERS).document(uid)
+
+    suspend fun uploadAvatarAndSave(uid: String, uri: android.net.Uri): String {
+        // 覆盖式命名：每次都写 avatars/{uid}.jpg
+        val ref = FirebaseStorage.getInstance().reference.child("avatars/$uid.jpg")
+        ref.putFile(uri).await()
+        val url = ref.downloadUrl.await().toString()
+
+        // 把下载地址写入 users/{uid}.avatarUrl（merge，不影响其它字段）
+        user(uid).set(mapOf("avatarUrl" to url), SetOptions.merge()).await()
+        return url
+    }
 
     // ------------------------------
     // Favorites (Food & Exercise)
@@ -365,26 +377,44 @@ class Remote(private val db: FirebaseFirestore = Firebase.firestore) {
         val bmr: Int? = null,
         val tdee: Int? = null,
         val recoMaintain: Int? = null,    // 维持体重推荐摄入
-        val recoCut: Int? = null          // 减脂期推荐摄入（示例：维持-15%）
+        val recoCut: Int? = null,          // 减脂期推荐摄入（示例：维持-15%)
+
+        // ★ 新增（计划 & 主题）
+        val planIntakeKcalPerDay: Int? = null,
+        val planIntakeMode: String? = null,
+        val planBurnKcalPerDay: Int? = null,
+        val planWorkoutMode: String? = null,
+        val themePalette: String? = null
     )
 
     private fun healthProfileDoc(uid: String) =
         user(uid).collection("meta").document("health")
 
     /** 监听健康档案（单文档） */
-    fun observeHealthProfile(uid: String): kotlinx.coroutines.flow.Flow<HealthProfile?> =
+    // Remote.kt
+    fun observeHealthProfile(uid: String): Flow<HealthProfile?> =
         listenDoc(healthProfileDoc(uid)) { d ->
             HealthProfile(
-                sex = d.getString("sex"),
-                heightCm = d.getDouble("heightCm"),
-                age = (d.getLong("age") ?: 0L).toInt(),
-                weightKg = d.getDouble("weightKg"),
-                bmr = (d.getLong("bmr") ?: 0L).toInt(),
-                tdee = (d.getLong("tdee") ?: 0L).toInt(),
+                sex          = d.getString("sex"),
+                heightCm     = d.getDouble("heightCm"),
+                age          = (d.getLong("age") ?: 0L).toInt(),
+                weightKg     = d.getDouble("weightKg"),
+                bmr          = (d.getLong("bmr") ?: 0L).toInt(),
+                tdee         = (d.getLong("tdee") ?: 0L).toInt(),
                 recoMaintain = (d.getLong("recoMaintain") ?: 0L).toInt(),
-                recoCut = (d.getLong("recoCut") ?: 0L).toInt()
+                recoCut      = (d.getLong("recoCut") ?: 0L).toInt(),
+
+                // ★ 新增：计划 & 主题
+                planIntakeKcalPerDay = (d.getLong("planIntakeKcalPerDay") ?: 0L).toInt()
+                    .takeIf { it > 0 },
+                planIntakeMode       = d.getString("planIntakeMode"),
+                planBurnKcalPerDay   = (d.getLong("planBurnKcalPerDay") ?: 0L).toInt()
+                    .takeIf { it > 0 },
+                planWorkoutMode      = d.getString("planWorkoutMode"),
+                themePalette         = d.getString("themePalette")
             )
         }
+
 
     /** 合并写（不会把没传的字段清空） */
     suspend fun setHealthProfile(uid: String, hp: HealthProfile) {

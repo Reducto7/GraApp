@@ -11,9 +11,10 @@ import androidx.room.RoomDatabase
         ExerciseEntity::class,
         BodyMeasureEntity::class
     ],
-    version = 6,         // ✅ 版本号 +1
+    version = 8,         // ✅ 版本号 +1
     exportSchema = false
 )
+
 abstract class AppDatabase : RoomDatabase() {
     abstract fun foodDao(): FoodDao
     abstract fun exerciseDao(): ExerciseDao

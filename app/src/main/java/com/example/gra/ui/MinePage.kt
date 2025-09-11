@@ -36,7 +36,11 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExitToApp
@@ -46,12 +50,34 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Create
+import androidx.compose.material.icons.outlined.DateRange
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import com.example.gra.R
 import com.example.gra.ui.theme.AppPalette
 import com.example.gra.ui.theme.AppThemeState
 import com.example.gra.ui.theme.Palettes
+import android.net.Uri
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.Dp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
+import com.google.firebase.storage.FirebaseStorage
+import kotlinx.coroutines.tasks.await
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -61,10 +87,24 @@ fun MinePage(
     val currentUser = FirebaseAuth.getInstance().currentUser
     val accountName = currentUser?.email ?: "Guest" // 默认显示 "Guest" 如果用户未登录
 
+    val ctx = LocalContext.current
+
     // === 新增：监听 uniqueId ===
     val uid = currentUser?.uid.orEmpty()
     val remote = remember { Remote.create() }
     var uniqueId by remember { mutableStateOf<String?>(null) }
+
+    var avatarUrl by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(uid) {
+        if (uid.isBlank()) return@LaunchedEffect
+        remote.observeUserProfile(uid).collectLatest { p ->
+            uniqueId = p?.uniqueId
+            avatarUrl = p?.avatarUrl   // ← 你的 profile 模型里新增/已有该字段
+            android.util.Log.d("Mine", "profile update: uniqueId=${p?.uniqueId}, avatarUrl=${p?.avatarUrl}")
+        }
+    }
+
 
     LaunchedEffect(uid) {
         if (uid.isBlank()) return@LaunchedEffect
@@ -102,108 +142,150 @@ fun MinePage(
                         .padding(32.dp)
                         // ✅ 让整页能上下滚
                         .verticalScroll(rememberScrollState()),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                    //horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-
-                    Spacer(Modifier.height(48.dp))
-                    TopIdentityBlock(
-                        uniqueId   = uniqueId,
-                        email      = accountName,
-                        onSaved    = { /* 保存后如果要额外处理就写这里；一般不用，监听会回流 */ }
+                    AvatarHeader(
+                        uniqueId = uniqueId,
+                        uid = uid,
+                        avatarUrl = avatarUrl,
+                        onAvatarChanged = { newUrl ->
+                            avatarUrl = newUrl
+                        }
                     )
+
 
                     Spacer(Modifier.height(32.dp))
 
-                    Text("User Details")
-                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "  User Details",
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Start,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.height(16.dp))
                     PersonalHealthCard(navController = navController)
                     // 内部展开再多，也能跟随页面滚动
 
                     Spacer(Modifier.height(32.dp))
 
-                    Text("Help Center")
-                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "  Help Center",
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Start,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    // 顶层 Help Center 下面的 Card：用这段替换原先固定高度且空内容的 Card
                     Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(50.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                    ){  }
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+// Help Center 下的 Card 里：
+                            var accountExpanded by remember { mutableStateOf(false) }
+                            var editingUid by remember { mutableStateOf(false) }
+                            // 行 1：账号信息（TODO）
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Search,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text("账号信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                                Spacer(Modifier.weight(1f))
+                                IconButton(onClick = { accountExpanded = !accountExpanded }) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.KeyboardArrowDown,
+                                        contentDescription = null,
+                                        modifier = Modifier.rotate(if (accountExpanded) 180f else 0f),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+
+                            AnimatedVisibility(visible = accountExpanded) {
+                                Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    // email
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("Email：", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(accountName, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                    // UID + 编辑
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("UID：", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(uniqueId ?: "未设置", style = MaterialTheme.typography.bodyMedium)
+                                        Spacer(Modifier.width(8.dp))
+                                        IconButton(onClick = { editingUid = !editingUid }) {
+                                            Icon(Icons.Default.Edit, contentDescription = "修改 UID", tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                    }
+
+                                    AnimatedVisibility(visible = editingUid) {
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            InlineUniqueIdEditor(
+                                                current = uniqueId,
+                                                onSaved = {
+                                                    editingUid = false
+                                                    Toast.makeText(ctx, "UID 已更新：$it", Toast.LENGTH_SHORT).show()
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Divider(Modifier.padding(vertical = 8.dp))
+
+                            // 行 2：退出账号（保留原逻辑）
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ExitToApp,
+                                    contentDescription = "退出账号",
+                                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.9f)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "退出账号",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.9f)
+                                )
+                                Spacer(Modifier.weight(1f))
+                                IconButton(
+                                    onClick = {
+                                        FirebaseAuth.getInstance().signOut()
+                                        navController.navigate("login") {
+                                            popUpTo("my") { inclusive = true }
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ExitToApp,
+                                        contentDescription = "退出账号",
+                                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.9f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                 }
             }
         }
     )
-}
-
-
-// 顶部两行 + 展开编辑 UID
-@Composable
-private fun TopIdentityBlock(
-    uniqueId: String?,
-    email: String?,
-    onSaved: (String) -> Unit = {}
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    // 第1行：居中显示“用户ID + 编辑图标”
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = uniqueId?.ifBlank { "未设置" } ?: "未设置",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold
-        )
-        Spacer(Modifier.width(8.dp))
-        /*
-        IconButton(onClick = { expanded = !expanded }) {
-            Icon(
-                imageVector = Icons.Default.Edit,
-                contentDescription = "编辑唯一ID",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-         */
-    }
-
-    Spacer(Modifier.height(8.dp))
-
-    // 第2行：居中灰色小字显示注册邮箱
-    Text(
-        text = email ?: "未绑定邮箱",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier
-            .fillMaxWidth(),
-        // 居中
-        textAlign = TextAlign.Center
-    )
-
-    // 展开：内联的“修改唯一ID”编辑区
-    AnimatedVisibility(
-        visible = expanded,
-        enter = expandVertically() + fadeIn(),
-        exit  = shrinkVertically() + fadeOut()
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            InlineUniqueIdEditor(
-                current = uniqueId,
-                onSaved = {
-                    onSaved(it)
-                    expanded = false // 保存后收起
-                }
-            )
-        }
-    }
 }
 
 // 轻量版的“唯一ID编辑器”，只负责当前页内联编辑
@@ -304,6 +386,7 @@ private fun InlineUniqueIdEditor(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PersonalHealthCard(
     navController: NavController,
@@ -319,17 +402,8 @@ fun PersonalHealthCard(
     // ----- 本地编辑态 -----
     var sex by remember { mutableStateOf(h?.sex ?: "male") }
     var height by remember { mutableStateOf(h?.heightCm?.takeIf { it > 0 }?.toString() ?: "") }
-    var weight by remember { mutableStateOf(h?.weightKg?.takeIf { it > 0 }?.toString() ?: "") }
     var age by remember { mutableStateOf(h?.age?.takeIf { it > 0 }?.toString() ?: "") }
 
-    LaunchedEffect(h) { // 后端回流时，同步到输入框
-        h?.let {
-            sex = it.sex
-            height = it.heightCm.takeIf { v -> v > 0 }?.toString() ?: ""
-            weight = it.weightKg.takeIf { v -> v > 0 }?.toString() ?: ""
-            age = it.age.takeIf { v -> v > 0 }?.toString() ?: ""
-        }
-    }
 
     // ----- 展开 & 箭头动画 -----
     var infoExpanded by remember { mutableStateOf(false) }
@@ -355,7 +429,7 @@ fun PersonalHealthCard(
         })
     }
 
-    val workoutOptions = listOf("轻量活动（约15%TDEE）", "中等活动（约25%TDEE）", "高量活动（约35%TDEE）", "自定义")
+    val workoutOptions = listOf("轻量活动", "中等活动", "高量活动", "自定义")
     var workoutSel by remember { mutableStateOf(workoutOptions.first()) }
     var customWorkoutBurn by remember { mutableStateOf("") }
     fun suggestBurnByWorkout(t: Int, sel: String) = when {
@@ -393,6 +467,31 @@ fun PersonalHealthCard(
         }
     }
 
+    LaunchedEffect(h) {
+        h?.let {
+            // 个人信息同步
+            sex    = it.sex
+            age    = it.age.takeIf { v -> v > 0 }?.toString() ?: ""
+
+            // ★ 补上这两行（关键）：
+            height = it.heightCm?.takeIf { v -> v > 0 }?.toString() ?: ""
+            // 如果以后还显示体重输入框，也一并同步：
+            // weight = it.weightKg?.takeIf { v -> v > 0 }?.toString() ?: ""
+
+            // 计划同步（你已有）
+            val savedIntakeMode = it.planIntakeMode ?: intakeOptions.first()
+            val savedIntakeKcal = (it.planIntakeKcalPerDay ?: 0).takeIf { v -> v > 0 }?.toString() ?: ""
+            val savedWorkoutMode = it.planWorkoutMode ?: workoutOptions.first()
+            val savedBurnKcal    = (it.planBurnKcalPerDay ?: 0).takeIf { v -> v > 0 }?.toString() ?: ""
+
+            intakeSel         = savedIntakeMode
+            customIntake      = if (savedIntakeMode == "自定义") savedIntakeKcal else ""
+            workoutSel        = savedWorkoutMode
+            customWorkoutBurn = if (savedWorkoutMode == "自定义") savedBurnKcal else ""
+        }
+    }
+
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -419,6 +518,12 @@ fun PersonalHealthCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Icon(
+                    imageVector = Icons.Outlined.Person,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.width(8.dp))
                 Text("个人信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { infoExpanded = !infoExpanded }) {
@@ -443,22 +548,24 @@ fun PersonalHealthCard(
                         RadioButton(selected = sex == "female", onClick = { sex = "female" }); Text("女")
                     }
                     OutlinedTextField(value = height, onValueChange = { height = it }, label = { Text("身高 cm") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = weight, onValueChange = { weight = it }, label = { Text("体重 kg") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = age, onValueChange = { age = it }, label = { Text("年龄") }, singleLine = true, modifier = Modifier.fillMaxWidth())
 
                     Button(
                         onClick = {
                             val hCm = height.toDoubleOrNull() ?: 0.0
-                            val wKg = weight.toDoubleOrNull() ?: 0.0
-                            val a = age.toIntOrNull() ?: 0
+                            val a   = age.toIntOrNull() ?: 0
+                            // 体重不再从输入框取（见第2条），直接用当前档案的值避免被清零
+                            val wKg = h?.weightKg ?: 0.0
+
                             scope.launch {
                                 savingInfo = true
                                 try {
-                                    vm.saveHealthProfile(sex, hCm, wKg, a) // 保存 -> 远端 -> 回流刷新  :contentReference[oaicite:4]{index=4}
+                                    vm.saveHealthProfile(sex, hCm, wKg, a)
                                     savedInfo = true
-                                    infoExpanded = false               // ✅ 自动收起
-                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                    cardScroll.animateScrollTo(0)      // ✅ 回到卡片顶部看到提示
+                                    bannerText = "个人信息已保存"        // ✅ 明确的成功反馈
+                                    infoExpanded = false
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    cardScroll.animateScrollTo(0)
                                 } catch (e: Exception) {
                                     Toast.makeText(ctx, "保存失败：${e.localizedMessage}", Toast.LENGTH_SHORT).show()
                                 } finally {
@@ -485,6 +592,12 @@ fun PersonalHealthCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Icon(
+                    imageVector = Icons.Outlined.Create,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.width(8.dp))
                 Text("目标设置", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { planExpanded = !planExpanded }) {
@@ -502,36 +615,183 @@ fun PersonalHealthCard(
                 enter = expandVertically() + fadeIn(),
                 exit = shrinkVertically() + fadeOut()
             ) {
+                // 在 PersonalHealthCard() -> 目标设置 planExpanded 的 AnimatedVisibility 内，
+// 用下面这段替换你现有的摄入/消耗 UI 一大块内容。
+
+                var intakeExpanded by remember { mutableStateOf(false) }
+                var burnExpanded by remember { mutableStateOf(false) }
+                val intakeArrow by animateFloatAsState(if (intakeExpanded) 180f else 0f, label = "intakeArrow")
+                val burnArrow   by animateFloatAsState(if (burnExpanded) 180f else 0f, label = "burnArrow")
+
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
                         "计算依据：BMR/TDEE（Mifflin–St Jeor + 活动系数），维持≈TDEE；减脂≈TDEE×0.85；增肌≈TDEE×1.10。运动消耗按 TDEE 的 15%/25%/35% 建议，也可自定义。",
                         style = MaterialTheme.typography.bodySmall
                     )
 
-                    Spacer(Modifier.height(4.dp))
-                    Text("每日摄入目标", style = MaterialTheme.typography.titleSmall,fontWeight = FontWeight.SemiBold)
-                    ChoiceChipsFlowRow(intakeOptions, intakeSel) { intakeSel = it }
-                    if (intakeSel == "自定义") {
-                        OutlinedTextField(
-                            value = customIntake, onValueChange = { customIntake = it },
-                            label = { Text("自定义每日摄入 (kcal)") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                    // —— 二级菜单 1：每日摄入目标 ——
+// 标题：实时显示当前 kcal
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "每日摄入目标：$intakeTarget kcal/日",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
                         )
-                    } else {
-                        AssistChip(onClick = {}, label = { Text("建议：$intakeTarget kcal/日") })
+                        Spacer(Modifier.weight(1f))
+                        IconButton(onClick = { intakeExpanded = !intakeExpanded }) {
+                            Icon(
+                                imageVector = Icons.Outlined.KeyboardArrowDown,
+                                contentDescription = null,
+                                modifier = Modifier.rotate(intakeArrow),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
 
-                    Spacer(Modifier.height(4.dp))
-                    Text("运动目标（每日消耗）", style = MaterialTheme.typography.titleSmall,fontWeight = FontWeight.SemiBold)
-                    ChoiceChipsFlowRow(workoutOptions, workoutSel) { workoutSel = it }
-                    if (workoutSel == "自定义") {
-                        OutlinedTextField(
-                            value = customWorkoutBurn, onValueChange = { customWorkoutBurn = it },
-                            label = { Text("自定义每日消耗 (kcal)") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                    CompositionLocalProvider(LocalMinimumInteractiveComponentEnforcement provides false) {
+                        AnimatedVisibility(
+                            visible = intakeExpanded,
+                            enter = expandVertically() + fadeIn(),
+                            exit = shrinkVertically() + fadeOut()
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                // 第一行：维持 / 减脂 / 增肌
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    listOf("维持", "减脂", "增肌").forEachIndexed { idx, opt ->
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(end = if (idx < 2) 24.dp else 0.dp)
+                                        ) {
+                                            RadioButton(
+                                                selected = intakeSel == opt,
+                                                onClick = { intakeSel = opt },
+                                                modifier = Modifier.size(18.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text(opt, style = MaterialTheme.typography.titleSmall)
+                                        }
+                                    }
+                                }
+                                // 第二行：“自定义 + 输入框”（同一行，不换行）
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    RadioButton(
+                                        selected = intakeSel == "自定义",
+                                        onClick = { intakeSel = "自定义" },
+                                        modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("自定义", style = MaterialTheme.typography.titleSmall)
+                                    Spacer(Modifier.width(12.dp))
+                                    OutlinedTextField(
+                                        value = customIntake,
+                                        onValueChange = { input ->
+                                            // 只保留数字
+                                            if (input.all { it.isDigit() }) {
+                                                customIntake = input
+                                            }
+                                        },
+                                        placeholder = {
+                                            Text(
+                                                "kcal/日",
+                                                style = MaterialTheme.typography.titleSmall
+                                            )
+                                        },
+                                        textStyle = MaterialTheme.typography.titleSmall,  // ← 输入框内文字变小
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.weight(1f),
+                                        enabled = intakeSel == "自定义"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Divider()
+
+// —— 二级菜单 2：运动目标（每日消耗） ——
+// 标题：实时显示当前 kcal
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "每日消耗目标：$burnTarget kcal/日",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
                         )
-                    } else {
-                        AssistChip(onClick = {}, label = { Text("建议：$burnTarget kcal/日") })
+                        Spacer(Modifier.weight(1f))
+                        IconButton(onClick = { burnExpanded = !burnExpanded }) {
+                            Icon(
+                                imageVector = Icons.Outlined.KeyboardArrowDown,
+                                contentDescription = null,
+                                modifier = Modifier.rotate(burnArrow),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    CompositionLocalProvider(LocalMinimumInteractiveComponentEnforcement provides false) {
+                        AnimatedVisibility(
+                            visible = burnExpanded,
+                            enter = expandVertically() + fadeIn(),
+                            exit = shrinkVertically() + fadeOut()
+                        ) {
+                            // —— 运动目标（每日消耗）——（第一行3个固定，第二行“自定义+输入框”同一行）
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                // 第一行：轻/中/高
+                                val fixedWorkout = listOf("轻量", "中等", "高量")
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    fixedWorkout.forEachIndexed { idx, opt ->
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(end = if (idx < 2) 24.dp else 0.dp)
+                                        ) {
+                                            RadioButton(
+                                                selected = workoutSel == opt,
+                                                onClick = { workoutSel = opt })
+                                            Spacer(Modifier.width(4.dp))
+                                            Text(opt, style = MaterialTheme.typography.titleSmall)
+                                        }
+                                    }
+                                }
+                                // 第二行：“自定义 + 输入框”（同一行，不换行）
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(
+                                        selected = intakeSel == "自定义",
+                                        onClick = { intakeSel = "自定义" })
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("自定义", style = MaterialTheme.typography.titleSmall)
+
+                                    Spacer(Modifier.width(12.dp))
+                                    OutlinedTextField(
+                                        value = customIntake,
+                                        onValueChange = { input ->
+                                            // 只保留数字
+                                            if (input.all { it.isDigit() }) {
+                                                customIntake = input
+                                            }
+                                        },
+                                        placeholder = {
+                                            Text(
+                                                "kcal/日",
+                                                style = MaterialTheme.typography.titleSmall
+                                            )
+                                        },
+                                        textStyle = MaterialTheme.typography.titleSmall,  // ← 输入框内文字变小
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), // ← 数字键盘
+                                        modifier = Modifier.weight(1f),
+                                        enabled = intakeSel == "自定义"
+                                    )
+                                }
+                            }
+                        }
                     }
 
+                    // 原“保存计划”按钮保持不变
                     Button(
                         onClick = {
                             scope.launch {
@@ -540,15 +800,18 @@ fun PersonalHealthCard(
                                     vm.updateHealth(
                                         mapOf(
                                             "planIntakeKcalPerDay" to intakeTarget,
-                                            "planIntakeMode" to intakeSel,
-                                            "planBurnKcalPerDay" to burnTarget,
-                                            "planWorkoutMode" to workoutSel
+                                            "planIntakeMode"       to intakeSel,
+                                            "planBurnKcalPerDay"   to burnTarget,
+                                            "planWorkoutMode"      to workoutSel
                                         )
-                                    ) // Firestore merge 写入  :contentReference[oaicite:5]{index=5}
+                                    )
                                     savedPlan = true
-                                    planExpanded = false             // ✅ 自动收起
-                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                    cardScroll.animateScrollTo(0)    // ✅ 回到卡片顶部看到提示
+                                    bannerText = "目标设置已保存"       // ✅ 明确的成功反馈
+                                    planExpanded = false
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    cardScroll.animateScrollTo(0)
+                                } catch (e: Exception) {               // ✅ 失败显式提示
+                                    Toast.makeText(ctx, "保存失败：${e.localizedMessage}", Toast.LENGTH_SHORT).show()
                                 } finally {
                                     savingPlan = false
                                 }
@@ -556,20 +819,15 @@ fun PersonalHealthCard(
                         },
                         enabled = !savingPlan,
                         modifier = Modifier.fillMaxWidth()
-                    ) {
+                    ){
                         if (savingPlan) {
                             CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(8.dp))
                         }
                         Text(if (savingPlan) "保存中…" else "保存计划")
                     }
-
-                    Divider()
-                    Text("当前推荐", style = MaterialTheme.typography.titleSmall)
-                    Text("BMR: ${h?.bmr ?: 0}  |  TDEE: $tdee")
-                    Text("维持摄入: $recoMaintain  |  减脂摄入: $recoCut  |  增肌摄入: $recoBulk")
-                    Text("运动消耗建议: $burnTarget kcal/日（当前选择）")
                 }
+
             }
 
             Divider()
@@ -589,6 +847,12 @@ fun PersonalHealthCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.colors ),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.width(8.dp))
                 Text("主题颜色", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { themeExpanded = !themeExpanded }) {
@@ -611,7 +875,7 @@ fun PersonalHealthCard(
                     Text("选择一个色板，保存后全局主色将立即生效。", style = MaterialTheme.typography.bodySmall)
 
                     // 色板选择（显示每个选项的 primary 预览）
-                    ThemePaletteOptions(
+                    ThemePaletteRadioGrid(
                         options = Palettes.all,
                         selectedKey = themeSel,
                         onSelected = { themeSel = it }
@@ -631,6 +895,7 @@ fun PersonalHealthCard(
                                     // 3) 可见反馈
                                     savedTheme = true
                                     themeExpanded = false            // 自动收起
+                                    bannerText = "主题颜色已保存"
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress) // 触感（已有 haptic）
                                     cardScroll.animateScrollTo(0)    // 回到卡片顶部看到 Banner
                                 } finally {
@@ -650,38 +915,6 @@ fun PersonalHealthCard(
                     }
                 }
             }
-
-            Divider()
-
-            // ===== 第三行：退出账号 =====
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "退出账号",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.9f)
-                )
-                Spacer(Modifier.weight(1f))
-                IconButton(
-                    onClick = {
-                        FirebaseAuth.getInstance().signOut()
-                        // 跳转到登录页
-                        navController.navigate("login") {
-                            popUpTo("my") { inclusive = true }
-                        }
-                    }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ExitToApp,
-                        contentDescription = "退出账号",
-                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.9f)
-                    )
-                }
-            }
-
         }
     }
 }
@@ -715,58 +948,157 @@ private fun SuccessBanner(text: String) {
 
 
 @Composable
-private fun ChoiceChipsFlowRow(
-    options: List<String>,
-    selected: String,
-    onSelected: (String) -> Unit
-) {
-    FlowRow(
-        modifier = Modifier.fillMaxWidth(),
-        maxItemsInEachRow = 3,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        options.forEach { opt ->
-            FilterChip(
-                selected = (selected == opt),
-                onClick = { onSelected(opt) },
-                label = { Text(opt, maxLines = 1, softWrap = false) }
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun ThemePaletteOptions(
+private fun ThemePaletteRadioGrid(
     options: List<AppPalette>,
     selectedKey: String,
     onSelected: (String) -> Unit
 ) {
     FlowRow(
         modifier = Modifier.fillMaxWidth(),
-        maxItemsInEachRow = 3,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        maxItemsInEachRow = 4, // ✅ 四个一行
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         options.forEach { p ->
-            FilterChip(
-                selected = (selectedKey == p.key),
-                onClick = { onSelected(p.key) },
-                label = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // 小色卡：显示 primary
-                        Box(
-                            modifier = Modifier
-                                .size(14.dp)
-                                .clip(MaterialTheme.shapes.extraSmall)
-                                .background(p.primary)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(p.label, maxLines = 1, softWrap = false)
-                    }
+            // 用“仅圆形色块 + 外环高亮”来表现 Radio 选中态
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(p.primary)               // 纯色圆点
+                    .clickable { onSelected(p.key) },     // 点击即选
+                contentAlignment = Alignment.Center
+            ) {
+                if ( selectedKey != p.key){
+                Box(
+                    Modifier
+                        .size(16.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.35f))
+                )
                 }
-            )
+            }
         }
     }
+}
+
+@Composable
+private fun AvatarHeader(
+    uniqueId: String?,
+    uid: String,
+    avatarUrl: String?,
+    onAvatarChanged: (String) -> Unit,
+    size: Dp = 96.dp
+) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var uploading by remember { mutableStateOf(false) }
+
+    // Android 13+：系统相册
+    val remote = remember { Remote.create() }
+
+    val pickPhoto = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null && uid.isNotBlank()) {
+            scope.launch {
+                try {
+                    val url = remote.uploadAvatarAndSave(uid, uri) // ← 调用 Remote
+                    onAvatarChanged(url)                                 // 本地立即刷新
+                    Toast.makeText(ctx, "头像已更新", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(ctx, "上传失败：${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    // 旧版回退：GetContent
+    val pickContent = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null && uid.isNotBlank()) {
+            scope.launch {
+                uploading = true
+                try {
+                    val url = uploadAvatarAndSave(uid, uri)
+                    onAvatarChanged(url)
+                    Toast.makeText(ctx, "头像已更新", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(ctx, "头像上传失败：${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                } finally {
+                    uploading = false
+                }
+            }
+        }
+    }
+
+    fun launchPicker() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        } else {
+            pickContent.launch("image/*")
+        }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // 圆形头像
+        Box(
+            modifier = Modifier
+                .size(size)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surface)
+                .border(3.dp, Color.White.copy(alpha = 0.8f), CircleShape)
+                .clickable(enabled = !uploading) { launchPicker() },
+            contentAlignment = Alignment.Center
+        ) {
+            AsyncImage(
+                model = ImageRequest.Builder(ctx)
+                    .data(avatarUrl)
+                    .crossfade(true)
+                    .placeholder(android.R.color.darker_gray)
+                    .error(android.R.color.darker_gray)
+                    .build(),
+                contentDescription = "avatar",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+
+            if (uploading) {
+                CircularProgressIndicator(
+                    strokeWidth = 3.dp,
+                    modifier = Modifier.size(28.dp),
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        // 第二行：UID（居中）
+        Text(
+            text = (uniqueId ?: "").ifBlank { "未登录" },
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+/** 上传头像到 Firebase Storage 并把下载 URL 存入 Firestore（users/{uid}.avatarUrl） */
+private suspend fun uploadAvatarAndSave(uid: String, uri: Uri): String {
+    // 1) Storage：按用户 ID 存一份固定命名（覆盖旧图）
+    val ref = FirebaseStorage.getInstance()
+        .reference.child("avatars/$uid.jpg")
+    ref.putFile(uri).await()
+
+    val downloadUrl = ref.downloadUrl.await().toString()
+
+    // 2) Firestore：merge 写入用户文档
+    val doc = FirebaseFirestore.getInstance().collection("users").document(uid)
+    doc.set(mapOf("avatarUrl" to downloadUrl), SetOptions.merge()).await()
+
+    return downloadUrl
 }

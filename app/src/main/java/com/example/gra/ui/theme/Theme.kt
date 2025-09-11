@@ -15,6 +15,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.*
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.gra.ui.viewmodel.BodyMeasureViewModel
 
 private val DarkColorScheme = darkColorScheme(
     primary = Purple80,
@@ -87,7 +89,7 @@ object Palettes {
 // ====== 全局主题状态（运行时切换立刻生效） ======
 object AppThemeState {
     // 默认用你的“默认色板”
-    var current by mutableStateOf(Palettes.Default)
+    var current by mutableStateOf(Palettes.DarkBlue)
         private set
 
     fun setPalette(key: String) {
@@ -123,4 +125,17 @@ fun GraTheme(
         typography = Typography,
         content = content
     )
+
+    // 顶层 Composable（示例）
+    val vm: BodyMeasureViewModel = viewModel()
+    val h by vm.health.collectAsState(null)
+
+    LaunchedEffect(h?.themePalette) {
+        h?.themePalette?.let { savedKey ->
+            if (savedKey.isNotBlank() && savedKey != AppThemeState.current.key) {
+                AppThemeState.setPalette(savedKey)
+            }
+        }
+    }
+
 }

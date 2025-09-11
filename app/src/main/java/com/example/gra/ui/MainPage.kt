@@ -152,12 +152,12 @@ val TREE_SEGMENTS = listOf(
 val LEAF_FX_PER_STAGE: List<LeafFx> = listOf(
     LeafFx(enabled = false),                          // 0：树太小，不触发
     LeafFx(enabled = false),                          // 1：不触发
-    LeafFx(enabled = true,  scale = 0.5f, offsetY = 25.dp),
-    LeafFx(enabled = true,  scale = 0.6f, offsetY = 40.dp), //3
-    LeafFx(enabled = true,  scale = 0.8f, offsetY = 70.dp),
-    LeafFx(enabled = true,  scale = 1f, offsetY = 80.dp), //5
-    LeafFx(enabled = true,  scale = 1.2f, offsetY = 100.dp, speed = 0.9f),
-    LeafFx(enabled = true,  scale = 1.3f,offsetY = 100.dp, speed = 0.9f)
+    LeafFx(enabled = true,  scale = 0.5f, offsetY = 50.dp),
+    LeafFx(enabled = true,  scale = 0.6f, offsetY = 60.dp), //3
+    LeafFx(enabled = true,  scale = 0.8f, offsetY = 100.dp),
+    LeafFx(enabled = true,  scale = 1f, offsetY = 100.dp), //5
+    LeafFx(enabled = true,  scale = 1.2f, offsetY = 120.dp, speed = 0.9f),
+    LeafFx(enabled = true,  scale = 1.3f,offsetY = 120.dp, speed = 0.9f)
 )
 
 enum class FlipMode { ALWAYS_NORMAL, ALWAYS_FLIPPED, ALTERNATE, RANDOM }
@@ -245,35 +245,28 @@ fun MainPage(navController: NavHostController, initialShow: String? = null)
 
 
 
-    Box(Modifier.fillMaxSize()) {
-        // 底层：天空渐变
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(topBlue, bottomGreen)
-                    )
-                )
-        )
+     Box(Modifier.fillMaxSize()) {
+         // 1) 背景：天空 + 草地 + 土坑 —— 放在最底层
+         Box(Modifier.fillMaxSize()) {
+             // 天空
+             Box(
+                 Modifier.fillMaxSize().background(
+                     Brush.verticalGradient(listOf(topBlue, bottomGreen))
+                 )
+             )
+             // 草地
+             RoundedRectLayer(
+                 widthFraction = 1f, heightDp = 150, topDp = 300, offsetYDp = 30,
+                 colors = listOf(grassStart, grassEnd)
+             )
+             // 土坑
+             EllipsePit(
+                 modifier = Modifier.fillMaxSize(),
+                 widthFraction = 0.28f, heightDp = 30, offsetYDp = -85
+             )
+         }
 
-        // 草地：宽度全屏，高度 130dp，圆角 300dp
-        RoundedRectLayer(
-            widthFraction = 1f,
-            heightDp = 150,     // 草地整体高度
-            topDp = 300,    // 顶部圆角半径（越大弧度越圆）
-            offsetYDp = 30,
-            colors = listOf(grassStart, grassEnd),
-        )
-
-        // 椭圆坑：画在草地之上、树之下
-        EllipsePit(
-            modifier = Modifier.fillMaxSize(),
-            widthFraction = 0.28f,   // 宽一些
-            heightDp = 30,           // 更扁
-            offsetYDp = -85,         // 抬高让它“嵌”在草地里
-        )
-
+         // 2) 中层：你的 Scaffold（底部按钮/栏目等 UI）
         Scaffold(
             containerColor = Color.Transparent,
             //bottomBar = { BottomNavigationBar(navController) }
@@ -284,7 +277,6 @@ fun MainPage(navController: NavHostController, initialShow: String? = null)
                     .padding(innerPadding),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-
 
                 //按钮
                 YourHomeSection(
@@ -297,95 +289,105 @@ fun MainPage(navController: NavHostController, initialShow: String? = null)
                     friendHasPending = hasPending,
                     taskHasClaimable = hasTaskClaimable   // 👈 新增这一行
                 )
-
-                //树木
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .offset(x = 8.dp, y = 10.dp)
-                ) {
-                    TreeStageController(
-                        growVm = growVm,
-                        stageVm = stageVm,
-                        uid = uid,
-                        breathKey = breathTick
-                    )
-                    // 叠加所有正在下雨的实例
-                    rains.forEach { rid ->
-                        RainOnceOverlay(
-                            id = rid,
-                            speed = 0.8f,
-                            fillWidthFraction = 0.6f,       // 铺满宽
-                            offsetY = 94.dp,               // 需要就调
-                            onFinished = { doneId ->
-                                rains.removeAll { it == doneId }
-                            },
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                }
             }
         }
-        // 左下角：成长 / 重置
-        Row(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // 成长（测试用）
-            HollowButton(
-                text = "成长",
-                onClick = {
-                    if (uid.isBlank()) return@HollowButton
-                    val start = stageVm.stageIndex
-                    // 与原 GrowthControls 一致：先强制升级，再从当前段播放到下一段
-                    growVm.forceLevelUp(uid) {
-                        stageVm.markManualOnce()
-                        stageVm.playFrom(start)
-                    }
-                },
-                modifier = Modifier
-            )
 
-            // 重置
-            HollowButton(
-                text = "重置",
-                onClick = {
-                    stageVm.reset()
-                    if (uid.isNotBlank()) growVm.resetLevel0(uid)
-                },
-                modifier = Modifier
-            )
-        }
 
-        // 右下角：浇水大圆按钮
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(16.dp)
-                .size(72.dp)
-                .clip(CircleShape)
-                .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
-                .clickable {
-                    // 1) 下雨动画
-                    rains += nextRainId++
-                    // 2) 树呼吸一次（只呼吸，不落叶）
-                    breathTick += 1
-                    // 3) 任务标记已完成（每天一次，重复点击保持完成）
-                    val today = java.time.LocalDate.now().toString()
-                    growVm.markWaterDone(uid, today)
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                painter = painterResource(id = R.drawable.water3),
-                contentDescription = "浇水",
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(48.dp)
-            )
-        }
+         // 3) 前景：只放“树 + 雨”作为交互层，确保可点到树
+         Box(
+             modifier = Modifier
+                 .fillMaxSize(),                 // 注意：这个外层不 clickable
+             contentAlignment = Alignment.BottomCenter
+         ) {
+             // 树（可点击）
+             Box(
+                 Modifier
+                     .fillMaxWidth()
+                     .offset(x = 8.dp, y = (-12).dp)  // 你原来的微调
+                     .zIndex(1f)                      // 树比雨高即可；前景层已在 Scaffold 之上
+             ) {
+                 TreeStageController(
+                     growVm = growVm,
+                     stageVm = stageVm,
+                     uid = uid,
+                     breathKey = breathTick
+                 )
+             }
+
+             // 雨（放在树下，避免挡树点击）
+             rains.forEach { rid ->
+                 RainOnceOverlay(
+                     id = rid,
+                     speed = 0.8f,
+                     fillWidthFraction = 0.6f,
+                     alignment = Alignment.BottomCenter,
+                     offsetY = 140.dp,
+                     zIndex = 2f,                   // 比树低
+                     onFinished = { doneId -> rains.removeAll { it == doneId } },
+                     modifier = Modifier.fillMaxSize()
+                 )
+             }
+         }
+
+         // 左下角：成长 / 重置
+         Row(
+             modifier = Modifier
+                 .align(Alignment.BottomStart)
+                 .padding(16.dp),
+             horizontalArrangement = Arrangement.spacedBy(12.dp)
+         ) {
+             // 成长（测试用）
+             HollowButton(
+                 text = "成长",
+                 onClick = {
+                     if (uid.isBlank()) return@HollowButton
+                     val start = stageVm.stageIndex
+                     // 与原 GrowthControls 一致：先强制升级，再从当前段播放到下一段
+                     growVm.forceLevelUp(uid) {
+                         stageVm.markManualOnce()
+                         stageVm.playFrom(start)
+                     }
+                 },
+                 modifier = Modifier
+             )
+
+             // 重置
+             HollowButton(
+                 text = "重置",
+                 onClick = {
+                     stageVm.reset()
+                     if (uid.isNotBlank()) growVm.resetLevel0(uid)
+                 },
+                 modifier = Modifier
+             )
+         }
+
+         // 右下角：浇水大圆按钮
+         Box(
+             modifier = Modifier
+                 .align(Alignment.BottomEnd)
+                 .padding(16.dp)
+                 .size(72.dp)
+                 .clip(CircleShape)
+                 .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                 .clickable {
+                     // 1) 下雨动画
+                     rains += nextRainId++
+                     // 2) 树呼吸一次（只呼吸，不落叶）
+                     breathTick += 1
+                     // 3) 任务标记已完成（每天一次，重复点击保持完成）
+                     val today = java.time.LocalDate.now().toString()
+                     growVm.markWaterDone(uid, today)
+                 },
+             contentAlignment = Alignment.Center
+         ) {
+             Icon(
+                 painter = painterResource(id = R.drawable.water3),
+                 contentDescription = "浇水",
+                 tint = MaterialTheme.colorScheme.primary,
+                 modifier = Modifier.size(48.dp)
+             )
+         }
     }
      // 悬浮窗（Dialog）——使用顶层的布尔值
      if (showFriends) {
@@ -1038,7 +1040,7 @@ fun RainOnceOverlay(
     id: Int,
     assetName: String = "rain.json",
     speed: Float = 1f,
-    zIndex: Float = 20f,
+    zIndex: Float = 10f,
     alignment: Alignment = Alignment.TopCenter,
     fillWidthFraction: Float = 1f,
     offsetX: Dp = 0.dp,

@@ -1,17 +1,20 @@
 package com.example.gra.ui.guidePage
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 import androidx.navigation.NavHostController
+import com.example.gra.ui.bottomGreen
+import com.example.gra.ui.topBlue
 import com.example.gra.ui.viewmodel.BodyMeasureViewModel
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OnboardingBasicPage(
     navController: NavHostController
@@ -22,7 +25,6 @@ fun OnboardingBasicPage(
     var weight by remember { mutableStateOf("") }
     var age by remember { mutableStateOf("") }
 
-    // 如果已存在历史档案，默认填入
     val h by vm.health.collectAsState(null)
     LaunchedEffect(h) {
         h?.let {
@@ -34,24 +36,36 @@ fun OnboardingBasicPage(
     }
 
     Scaffold { inner ->
-        Column(Modifier.padding(inner).padding(24.dp)) {
-            Text("完善基本信息", style = MaterialTheme.typography.headlineSmall)
-            Spacer(Modifier.height(12.dp))
-            // 简单性别选择
-            // ✅ 性别：RadioButton 实现
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(selected = sex == "male", onClick = { sex = "male" })
-                Text("男")
-                Spacer(Modifier.width(16.dp))
-                RadioButton(selected = sex == "female", onClick = { sex = "female" })
-                Text("女")
+        Box(
+            modifier = Modifier
+                .padding(inner)
+                .fillMaxSize()
+                .background(
+                    brush = Brush.verticalGradient(colors = listOf(topBlue, bottomGreen))
+                )
+                .padding(horizontal = 36.dp)
+        ) {
+            // 中间部分：标题、输入框
+            Column(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("完善基本信息", style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.height(16.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = sex == "male", onClick = { sex = "male" })
+                    Text("男")
+                    Spacer(Modifier.width(16.dp))
+                    RadioButton(selected = sex == "female", onClick = { sex = "female" })
+                    Text("女")
+                }
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(value = height, onValueChange = { height = it }, label = { Text("身高 cm") })
+                OutlinedTextField(value = weight, onValueChange = { weight = it }, label = { Text("体重 kg") })
+                OutlinedTextField(value = age, onValueChange = { age = it }, label = { Text("年龄") })
             }
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(value = height, onValueChange = { height = it }, label = { Text("身高 cm") })
-            OutlinedTextField(value = weight, onValueChange = { weight = it }, label = { Text("体重 kg") })
-            OutlinedTextField(value = age, onValueChange = { age = it }, label = { Text("年龄") })
 
-            Spacer(Modifier.height(24.dp))
+            // 底部按钮
             Button(
                 onClick = {
                     val hCm = height.toDoubleOrNull() ?: 0.0
@@ -60,9 +74,15 @@ fun OnboardingBasicPage(
                     vm.saveHealthProfile(sex, hCm, wKg, a)
                     navController.navigate("onboarding/result")
                 },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("下一步") }
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .offset(y = -150.dp)
+            ) {
+                Text("下一步")
+            }
         }
     }
 }
+
 

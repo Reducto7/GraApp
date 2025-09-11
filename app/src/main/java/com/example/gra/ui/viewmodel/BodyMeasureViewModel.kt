@@ -126,8 +126,16 @@ class BodyMeasureViewModel(app: Application) : AndroidViewModel(app) {
         val bmr: Int = 0,
         val tdee: Int = 0,
         val recoMaintain: Int = 0,
-        val recoCut: Int = 0
+        val recoCut: Int = 0,
+
+        // ★ 新增（计划 & 主题）
+        val planIntakeKcalPerDay: Int? = null,
+        val planIntakeMode: String? = null,
+        val planBurnKcalPerDay: Int? = null,
+        val planWorkoutMode: String? = null,
+        val themePalette: String? = null
     )
+
 
     private val _health = MutableStateFlow<HealthUi?>(null)
     val health: StateFlow<HealthUi?> = _health
@@ -146,9 +154,17 @@ class BodyMeasureViewModel(app: Application) : AndroidViewModel(app) {
                             bmr = it.bmr ?: 0,
                             tdee = it.tdee ?: 0,
                             recoMaintain = it.recoMaintain ?: 0,
-                            recoCut = it.recoCut ?: 0
+                            recoCut = it.recoCut ?: 0,
+
+                            // ★ 新增
+                            planIntakeKcalPerDay = it.planIntakeKcalPerDay,
+                            planIntakeMode       = it.planIntakeMode,
+                            planBurnKcalPerDay   = it.planBurnKcalPerDay,
+                            planWorkoutMode      = it.planWorkoutMode,
+                            themePalette         = it.themePalette
                         )
                     }
+
                 }
             }
         }

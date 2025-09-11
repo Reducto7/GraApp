@@ -1,12 +1,14 @@
 package com.example.gra.ui.guidePage
 
 import android.widget.Toast
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.example.gra.ui.data.Remote
@@ -14,9 +16,12 @@ import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.gra.ui.bottomGreen
+import com.example.gra.ui.topBlue
 import com.example.gra.ui.viewmodel.BodyMeasureViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -53,8 +58,47 @@ fun OnboardingIdPage(
         }
     }
 
-    Scaffold(
-        bottomBar = {
+    Scaffold { inner ->
+        Box(
+            modifier = Modifier
+                .padding(inner)
+                .fillMaxSize()
+                .background(brush = Brush.verticalGradient(colors = listOf(topBlue, bottomGreen)))
+                .padding(horizontal = 36.dp)
+        ) {
+            // 中间部分：标题、说明、输入框
+            Column(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("设置你的唯一 ID",
+                    style = MaterialTheme.typography.titleLarge,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(8.dp))
+                Text("将作为公开昵称，3–20 个字符（a–z, 0–9, 下划线）。",
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = uniqueId,
+                    onValueChange = { uniqueId = it },
+                    singleLine = true,
+                    label = { Text("唯一 ID") },
+                    supportingText = {
+                        when {
+                            checking      -> Text("检查中…")
+                            error != null -> Text("检查失败：$error")
+                            available == true  -> Text("✅ 可以使用")
+                            available == false -> Text("❌ 已被占用")
+                        }
+                    },
+                    isError = (available == false),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            // 底部的下一步按钮
             Button(
                 onClick = {
                     if (uid.isBlank()) {
@@ -81,41 +125,14 @@ fun OnboardingIdPage(
                 },
                 enabled = !submitting && uniqueId.isNotBlank() && (available != false),
                 modifier = Modifier
+                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .padding(16.dp)
-            ) { Text(if (submitting) "保存中…" else "下一步") }
-        }
-    ) { inner ->
-        Column(
-            Modifier
-                .padding(inner)
-                .fillMaxSize()
-                .padding(horizontal = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Spacer(Modifier.weight(1f))
-            Text("设置你的全局唯一 ID", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(8.dp))
-            Text("将作为公开昵称，3–20 个字符（a–z, 0–9, 下划线）。", textAlign = TextAlign.Center)
-            Spacer(Modifier.height(16.dp))
-            OutlinedTextField(
-                value = uniqueId,
-                onValueChange = { uniqueId = it },
-                singleLine = true,
-                label = { Text("唯一 ID") },
-                supportingText = {
-                    when {
-                        checking      -> Text("检查中…")
-                        error != null -> Text("检查失败：$error")
-                        available == true  -> Text("✅ 可以使用")
-                        available == false -> Text("❌ 已被占用")
-                    }
-                },
-                isError = (available == false),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.weight(1f))
+                    .offset(y = - 150.dp)
+            ) {
+                Text(if (submitting) "保存中…" else "下一步")
+            }
         }
     }
+
 }
 
